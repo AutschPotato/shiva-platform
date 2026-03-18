@@ -2,6 +2,31 @@
 
 Future standalone platform repository for the distributed k6 runtime.
 
+## Quick Start For Windows
+
+Prerequisites:
+
+- Docker Desktop
+
+From the repo root in PowerShell:
+
+```powershell
+docker compose -f .\docker-compose.yml up -d --build
+```
+
+Open after startup:
+
+- Controller API: `http://localhost:8080`
+- Target load balancer: `http://localhost:8090`
+
+Stop the platform stack again:
+
+```powershell
+docker compose -f .\docker-compose.yml down
+```
+
+This starts the local integrated platform stack with MySQL, controller, workers, dummy targets, and the target load balancer.
+
 ## Owns
 
 - `controller/`

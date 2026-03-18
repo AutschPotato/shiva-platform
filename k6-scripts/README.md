@@ -2,11 +2,10 @@
 
 This directory contains worker-side runtime files and generated script/config artifacts used by the platform.
 
-Important files include:
+Stable files that belong in the repository:
 
 - `entrypoint.sh`
-- `current-test.js`
-- `config.json`
-- `k6-env.sh`
+- `placeholder.js`
+- `README.md`
 
-This directory is intended to stay with the future platform repository because it is part of worker orchestration and runtime execution.
+Generated runtime files such as `current-test.js`, `config.json`, and `k6-env.sh` are created per test run and should exist locally at runtime, but should not be committed to the repository.

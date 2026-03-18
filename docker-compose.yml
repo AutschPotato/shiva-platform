@@ -99,7 +99,7 @@ services:
       - dummy9
       - dummy10
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8090/health"]
       interval: 5s
       timeout: 3s
       retries: 5

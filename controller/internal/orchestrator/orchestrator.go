@@ -350,7 +350,18 @@ func (o *Orchestrator) shouldCompleteTest(ctx context.Context, tickCount int, st
 	if state.controllable {
 		return state.seenRunning && tickCount >= minTicksBeforeEndCheck && o.allWorkersEnded(ctx)
 	}
-	return state.seenRunning && state.zeroMetricRun >= zeroTicksToEnd
+	if !state.seenRunning {
+		return false
+	}
+	if state.zeroMetricRun >= zeroTicksToEnd {
+		return true
+	}
+	// Native executors can stay artificially alive when the k6 web dashboard
+	// keeps the process open after load generation has finished. In that case
+	// VUs in the metrics snapshot may never drop to zero, but /v1/status already
+	// reports the workers as paused/finished. Allow the status path to end the
+	// run once the test has definitely started.
+	return tickCount >= minTicksBeforeEndCheck && o.allWorkersEnded(ctx)
 }
 
 func (o *Orchestrator) pollLoop(ctx context.Context, testID string, onComplete CompletionFunc) {
@@ -393,8 +404,9 @@ func (o *Orchestrator) pollLoop(ctx context.Context, testID string, onComplete C
 			// 2. controllable without managed ramp: Upload of externally-controlled script without config.
 			//    Workers manage their own duration; check allWorkersEnded() after a grace period.
 			//
-			// 3. Native (arrival-rate): k6 status API is unreliable for non-externally-controlled executors.
-			//    Use metrics-based detection: seenRunning + 3 consecutive zero-VU ticks.
+			// 3. Native (arrival-rate): prefer metrics-based detection, but fall back
+			//    to worker status once the run has definitely started. This avoids
+			//    dashboard-held processes keeping the controller in "running" forever.
 			ended := o.shouldCompleteTest(ctx, tickCount, state)
 
 			if tickCount%5 == 0 {

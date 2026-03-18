@@ -7,4 +7,8 @@ controller/.next
 controller/server
 controller/server.exe
 
+k6-scripts/config.json
+k6-scripts/current-test.js
+k6-scripts/k6-env.sh
+
 artifacts/
