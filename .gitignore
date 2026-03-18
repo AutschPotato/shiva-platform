@@ -1,0 +1,10 @@
+.DS_Store
+.env
+*.log
+
+controller/.env
+controller/.next
+controller/server
+controller/server.exe
+
+artifacts/

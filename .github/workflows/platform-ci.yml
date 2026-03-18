@@ -1,0 +1,56 @@
+name: platform-ci
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "controller/**"
+      - "dummy-service/**"
+      - "loadbalancer/**"
+      - "k6-scripts/**"
+      - "docker-compose.platform.yml"
+      - ".github/workflows/platform-ci.yml"
+  pull_request:
+    paths:
+      - "controller/**"
+      - "dummy-service/**"
+      - "loadbalancer/**"
+      - "k6-scripts/**"
+      - "docker-compose.platform.yml"
+      - ".github/workflows/platform-ci.yml"
+
+jobs:
+  controller-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: controller
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Build controller
+        run: go build ./cmd/server
+
+  platform-compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify platform compose config
+        run: docker compose -f docker-compose.platform.yml config > platform-compose.rendered.yml
+
+      - name: Upload rendered compose
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-compose-rendered
+          path: platform-compose.rendered.yml

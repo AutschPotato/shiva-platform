@@ -1,0 +1,7 @@
+.next/
+server
+coverage.out
+*.test
+*.out
+.env
+.env.local

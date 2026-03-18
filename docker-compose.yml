@@ -1,0 +1,355 @@
+name: shiva-platform
+
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  mysql:
+    <<: *default-logging
+    image: mysql:8.0
+    networks:
+      - loadtest-net
+    environment:
+      MYSQL_ROOT_PASSWORD: rootPassword
+      MYSQL_DATABASE: shiva
+      MYSQL_USER: k6user
+      MYSQL_PASSWORD: k6password
+    ports:
+      - "3306:3306"
+    command:
+      - "--sort-buffer-size=16M"
+      - "--max-allowed-packet=100M"
+    mem_limit: "1g"
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  controller:
+    <<: *default-logging
+    build: ./controller
+    networks:
+      - loadtest-net
+    volumes:
+      - ./k6-scripts:/scripts
+      - k6-output:/output
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SCRIPTS_DIR: "/scripts"
+      OUTPUT_DIR: "/output"
+      PORT: "8080"
+      DB_USER: k6user
+      DB_PASSWORD: k6password
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: shiva
+      JWT_SECRET: change-me-in-production-use-a-long-random-string
+      API_KEY: ""
+      ADMIN_KEY: ""
+      INITIAL_ADMIN_USERNAME: admin
+      INITIAL_ADMIN_EMAIL: admin@example.com
+      INITIAL_ADMIN_PASSWORD: changeme
+      K6_WORKERS: "worker1:6565,worker2:6565,worker3:6565,worker4:6565,worker5:6565,worker6:6565,worker7:6565,worker8:6565,worker9:6565,worker10:6565"
+      CORS_ORIGINS: "http://localhost:3000"
+      METRICS_POLL_INTERVAL_MS: "2000"
+      K6_COMPLETION_BUFFER_SEC: "30"
+      K6_DASHBOARD_ENABLED: "true"
+      K6_DASHBOARD_HOST: "0.0.0.0"
+      K6_DASHBOARD_PORT: "5665"
+      THRESHOLD_SUCCESS_RATE: "0.95"
+      THRESHOLD_ERROR_RATE: "0.1"
+      THRESHOLD_P90_MS: "1500"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    mem_limit: "512m"
+    cpus: 1.0
+
+  target-lb:
+    <<: *default-logging
+    image: nginx:alpine
+    networks:
+      - loadtest-net
+    volumes:
+      - ./loadbalancer/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8090:8090"
+    depends_on:
+      - dummy1
+      - dummy2
+      - dummy3
+      - dummy4
+      - dummy5
+      - dummy6
+      - dummy7
+      - dummy8
+      - dummy9
+      - dummy10
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: "2g"
+    cpus: 8.0
+
+  dummy1: &dummy-base
+    <<: *default-logging
+    build: ./dummy-service
+    networks: [loadtest-net]
+    environment:
+      PORT: "8090"
+    healthcheck: &dummy-health
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: "128m"
+    cpus: 1.0
+
+  dummy2:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy3:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy4:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy5:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy6:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy7:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy8:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy9:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  dummy10:
+    <<: *dummy-base
+    environment:
+      PORT: "8090"
+
+  worker1:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: &worker-volumes
+      - ./k6-scripts:/scripts:ro
+      - k6-output:/output
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker1"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6565:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker2:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker2"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6566:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker3:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker3"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6567:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker4:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker4"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6568:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker5:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker5"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6569:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker6:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker6"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6570:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker7:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker7"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6571:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker8:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker8"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6572:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker9:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker9"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6573:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+  worker10:
+    <<: *default-logging
+    image: grafana/k6:latest
+    networks: [loadtest-net]
+    volumes: *worker-volumes
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    command: []
+    restart: unless-stopped
+    environment:
+      TARGET_URL: "http://target-lb:8090"
+      WORKER_ID: "worker10"
+      K6_WEB_DASHBOARD: "true"
+      K6_WEB_DASHBOARD_HOST: "0.0.0.0"
+      K6_WEB_DASHBOARD_PORT: "5665"
+    ports: ["6574:6565"]
+    mem_limit: "512m"
+    cpus: 2.0
+
+volumes:
+  k6-output:
+
+networks:
+  loadtest-net:
+    driver: bridge
