@@ -1,5 +1,6 @@
 .next/
-server
+/server
+/server.exe
 coverage.out
 *.test
 *.out
