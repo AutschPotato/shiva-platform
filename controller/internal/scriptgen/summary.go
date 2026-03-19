@@ -59,45 +59,45 @@ type SummaryBreakdownStats struct {
 }
 
 type WorkerSummaryMetrics struct {
-	Name                     string
-	Requests                 float64
-	BusinessRequests         float64
-	BusinessSuccesses        float64
-	BusinessFailures         float64
-	BusinessStatus2xx        float64
-	BusinessStatus4xx        float64
-	BusinessStatus5xx        float64
+	Name                      string
+	Requests                  float64
+	BusinessRequests          float64
+	BusinessSuccesses         float64
+	BusinessFailures          float64
+	BusinessStatus2xx         float64
+	BusinessStatus4xx         float64
+	BusinessStatus5xx         float64
 	BusinessTransportFailures float64
-	AuthRequests             float64
-	ErrorRate                float64
-	Latency                  SummaryLatencyStats
-	BusinessLatency          SummaryLatencyStats
-	DurationMs               float64
+	AuthRequests              float64
+	ErrorRate                 float64
+	Latency                   SummaryLatencyStats
+	BusinessLatency           SummaryLatencyStats
+	DurationMs                float64
 }
 
 type MergedSummaryMetrics struct {
-	RawWorkerCount           int
-	HasBusinessMetrics       bool
-	TotalRequests            float64
-	TotalSuccesses           float64
-	TotalFailures            float64
-	TotalStatus4xx           float64
-	TotalStatus5xx           float64
-	Iterations               float64
-	ChecksPasses             float64
-	ChecksFails              float64
-	TotalLatency             SummaryLatencyStats
-	BusinessRequests         float64
-	BusinessSuccesses        float64
-	BusinessFailures         float64
-	BusinessStatus2xx        float64
-	BusinessStatus4xx        float64
-	BusinessStatus5xx        float64
+	RawWorkerCount            int
+	HasBusinessMetrics        bool
+	TotalRequests             float64
+	TotalSuccesses            float64
+	TotalFailures             float64
+	TotalStatus4xx            float64
+	TotalStatus5xx            float64
+	Iterations                float64
+	ChecksPasses              float64
+	ChecksFails               float64
+	TotalLatency              SummaryLatencyStats
+	BusinessRequests          float64
+	BusinessSuccesses         float64
+	BusinessFailures          float64
+	BusinessStatus2xx         float64
+	BusinessStatus4xx         float64
+	BusinessStatus5xx         float64
 	BusinessTransportFailures float64
-	BusinessLatency          SummaryLatencyStats
-	BusinessBreakdown        *SummaryBreakdownStats
-	Workers                  []WorkerSummaryMetrics
-	Thresholds               []model.ThresholdResult
+	BusinessLatency           SummaryLatencyStats
+	BusinessBreakdown         *SummaryBreakdownStats
+	Workers                   []WorkerSummaryMetrics
+	Thresholds                []model.ThresholdResult
 }
 
 type AuthSummaryData struct {

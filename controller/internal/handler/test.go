@@ -31,20 +31,20 @@ type pendingTestInfo struct {
 }
 
 type completionData struct {
-	metrics   *model.AggregatedMetrics
+	metrics    *model.AggregatedMetrics
 	timeSeries []model.TimePoint
-	metadata  *model.TestMetadata
-	warnings  []model.ConflictWarning
+	metadata   *model.TestMetadata
+	warnings   []model.ConflictWarning
 }
 
 type executionPreparation struct {
-	scriptContent     string
-	configContent     string
-	conflictWarnings  []model.ConflictWarning
-	configStages      []model.Stage
-	envVars           map[string]string
-	executorType      scriptgen.ExecutorType
-	controllable      bool
+	scriptContent    string
+	configContent    string
+	conflictWarnings []model.ConflictWarning
+	configStages     []model.Stage
+	envVars          map[string]string
+	executorType     scriptgen.ExecutorType
+	controllable     bool
 	payload          *scriptgen.BuilderPayloadArtifacts
 }
 
@@ -53,13 +53,13 @@ type scheduleCompletionNotifier interface {
 }
 
 type TestHandler struct {
-	store      *store.Store
-	orch       *orchestrator.Orchestrator
-	logger     *slog.Logger
-	scriptsDir string
-	outputDir  string
-	mu         sync.Mutex
-	pendingMeta map[string]*pendingTestInfo
+	store            *store.Store
+	orch             *orchestrator.Orchestrator
+	logger           *slog.Logger
+	scriptsDir       string
+	outputDir        string
+	mu               sync.Mutex
+	pendingMeta      map[string]*pendingTestInfo
 	scheduleNotifier scheduleCompletionNotifier
 }
 
@@ -601,6 +601,29 @@ func effectiveTestURL(req model.TestRequest, envVars map[string]string) string {
 	return ""
 }
 
+func expectedRuntimeForExecution(req model.TestRequest, prepared *executionPreparation) time.Duration {
+	if prepared == nil || prepared.controllable {
+		return 0
+	}
+	if strings.TrimSpace(prepared.configContent) != "" {
+		return scriptgen.EstimateConfiguredExecutionDuration(prepared.configContent)
+	}
+	switch prepared.executorType {
+	case scriptgen.ExecutorConstantArrivalRate:
+		if strings.TrimSpace(req.Duration) == "" {
+			return time.Minute
+		}
+		return time.Duration(scriptgen.ParseK6Duration(req.Duration)) * time.Second
+	case scriptgen.ExecutorRampingArrivalRate:
+		total := 0
+		for _, stage := range req.Stages {
+			total += scriptgen.ParseK6Duration(stage.Duration)
+		}
+		return time.Duration(total) * time.Second
+	default:
+		return 0
+	}
+}
 func (h *TestHandler) createRunningLoadTest(ctx context.Context, req model.TestRequest, userID int64, username string, prepared *executionPreparation) (string, error) {
 	testID := uuid.New().String()
 	lt := &model.LoadTest{
@@ -675,7 +698,8 @@ func (h *TestHandler) startPreparedExecution(ctx context.Context, testID string,
 		h.logger.Info("ramping manager started", "stages", len(rampingStages), "managed_ramp", true)
 	}
 
-	h.orch.StartPolling(testID, prepared.controllable, hasManagedRamp, h.onTestComplete)
+	expectedRunDuration := expectedRuntimeForExecution(req, prepared)
+	h.orch.StartPolling(testID, prepared.controllable, hasManagedRamp, expectedRunDuration, h.onTestComplete)
 
 	h.logger.Info("test started",
 		"test_id", testID,
@@ -703,9 +727,14 @@ func applySummaryPercentiles(finalMetrics *model.AggregatedMetrics, percentiles 
 }
 
 func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.AggregatedMetrics) (string, bool) {
-	for attempt := 0; attempt < 20; attempt++ {
+	const (
+		summaryRetryCount = 45
+		summaryRetryDelay = 1 * time.Second
+	)
+
+	for attempt := 0; attempt < summaryRetryCount; attempt++ {
 		if attempt > 0 {
-			time.Sleep(3 * time.Second)
+			time.Sleep(summaryRetryDelay)
 		}
 
 		percentiles, err := scriptgen.ReadAndMergeSummaries(h.outputDir)
@@ -824,7 +853,7 @@ func (h *TestHandler) StartTest(w http.ResponseWriter, r *http.Request) {
 
 	confirm := r.URL.Query().Get("confirm") == "true"
 	if conflict := checkManualStartConflict(r.Context(), h.store, confirm); conflict != nil {
-		writeJSON(w, http.StatusConflict, map[string]interface{}{
+		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":             "manual test may conflict with a scheduled test",
 			"conflict":          conflict,
 			"confirm_available": true,
@@ -842,7 +871,7 @@ func (h *TestHandler) StartTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"test_id":      testID,
 		"status":       "running",
 		"controllable": controllable,
@@ -899,13 +928,13 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 	h.orch.StopPolling()
 
 	// Do NOT call StopAll here — let k6 finish naturally when its duration expires.
-	// The externally-controlled executor duration = stage_duration + 30s buffer.
+	// The externally-controlled executor duration includes a configurable completion buffer.
 	// If we send {stopped: true} now, k6 writes empty handleSummary (0 VUs → 0 data).
 	// Instead, wait for k6 to exit on its own, which produces complete handleSummary.
 	h.logger.Info("waiting for k6 workers to finish naturally (duration buffer)", "test_id", testID)
 
 	// Wait for k6 handleSummary files. k6 exits when its duration expires
-	// (up to 30s after stages complete), then writes handleSummary and exits.
+	// (up to the configured completion buffer after stages complete), then writes handleSummary and exits.
 	rawSummary, summaryLoaded := h.loadCompletionSummary(testID, finalMetrics)
 	payloadArtifact := h.loadCompletionPayloadArtifact()
 	authSummary, rawAuthSummary := h.loadCompletionAuthSummary()
@@ -932,7 +961,7 @@ func (h *TestHandler) GetLiveMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// If test just completed, still return the result.
 	if phase == orchestrator.PhaseDone {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"test_id": phaseMsg, // phaseMsg holds the testID when done
 			"status":  "completed",
 			"phase":   string(phase),
@@ -943,7 +972,7 @@ func (h *TestHandler) GetLiveMetrics(w http.ResponseWriter, r *http.Request) {
 	// Collecting phase: test finished but metrics/summary are being gathered.
 	// activeTestID may already be cleared by StopPolling, so use phase to detect.
 	if phase == orchestrator.PhaseCollecting {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"test_id": testID,
 			"status":  "running",
 			"phase":   string(phase),
@@ -959,7 +988,7 @@ func (h *TestHandler) GetLiveMetrics(w http.ResponseWriter, r *http.Request) {
 
 	metrics := h.orch.GetLatestMetrics()
 
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"test_id": testID,
 		"status":  "running",
 		"phase":   string(phase),
@@ -992,7 +1021,7 @@ func (h *TestHandler) UploadScript(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "missing 'script' file field", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	content, err := io.ReadAll(file)
 	if err != nil {
@@ -1106,13 +1135,13 @@ func (h *TestHandler) ScaleTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.Info("VUs scaled", "test_id", testID, "total_vus", req.VUs)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "scaled", "test_id": testID, "vus": req.VUs})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "scaled", "test_id": testID, "vus": req.VUs})
 }
 
 // GetWorkerStatus returns the current status of all workers.
 func (h *TestHandler) GetWorkerStatus(w http.ResponseWriter, r *http.Request) {
 	workers := h.orch.CheckWorkers(r.Context())
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"workers":     workers,
 		"active_test": h.orch.GetActiveTestID(),
 	})

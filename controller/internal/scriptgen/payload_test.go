@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shiva-load-testing/controller/internal/model"
 )
@@ -54,7 +55,7 @@ func TestBuildBuilderPayloadArtifactsCountsUTF8Bytes(t *testing.T) {
 }
 
 func TestBuildBuilderPayloadArtifactsRejectsTooSmallTarget(t *testing.T) {
-	if _, err := buildExactPayloadContent(map[string]interface{}{"message": "hello"}, 1); err == nil {
+	if _, err := buildExactPayloadContent(map[string]any{"message": "hello"}, 1); err == nil {
 		t.Fatalf("expected too-small target to fail")
 	}
 }
@@ -159,12 +160,12 @@ func TestBuildBuilderConfigIncludesVisibleRuntimeContract(t *testing.T) {
 		t.Fatalf("expected builder config, got error: %v", err)
 	}
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal([]byte(content), &config); err != nil {
 		t.Fatalf("expected valid config json, got error: %v", err)
 	}
 
-	env, ok := config["env"].(map[string]interface{})
+	env, ok := config["env"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected env block in builder config")
 	}
@@ -207,12 +208,12 @@ func TestEnrichBuilderConfigMergesBuilderEnvContract(t *testing.T) {
 		t.Fatalf("expected config enrichment, got error: %v", err)
 	}
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal([]byte(content), &config); err != nil {
 		t.Fatalf("expected valid config json, got error: %v", err)
 	}
 
-	env, ok := config["env"].(map[string]interface{})
+	env, ok := config["env"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected env block in config")
 	}
@@ -296,5 +297,12 @@ func TestGenerateFromBuilderKeepsDefaultThinkTimeForVUExecutors(t *testing.T) {
 
 	if !strings.Contains(result.Script, "sleep(0.5);") {
 		t.Fatalf("expected default think-time to remain for VU-based executors")
+	}
+}
+
+func TestEstimateConfiguredExecutionDurationForConstantArrivalRate(t *testing.T) {
+	config := `{"scenarios":{"default":{"executor":"constant-arrival-rate","rate":1000,"timeUnit":"1s","duration":"1m","preAllocatedVUs":20,"maxVUs":40}}}`
+	if got := EstimateConfiguredExecutionDuration(config); got != time.Minute {
+		t.Fatalf("expected 1m configured duration, got %s", got)
 	}
 }

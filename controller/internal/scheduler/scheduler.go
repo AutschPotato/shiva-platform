@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	tickInterval          = 10 * time.Second
-	consecutiveFailLimit  = 3
-	maxRecoveryAdvances   = 1000
+	tickInterval         = 10 * time.Second
+	consecutiveFailLimit = 3
+	maxRecoveryAdvances  = 1000
 )
 
 // TestExecutor is the interface the scheduler uses to run tests.
@@ -35,10 +35,10 @@ type ActiveTestProvider interface {
 // Scheduler runs a background loop that checks for due scheduled tests and executes them.
 // It is database-backed and survives controller restarts.
 type Scheduler struct {
-	store    *store.Store
-	executor TestExecutor
-	active   ActiveTestProvider
-	logger   *slog.Logger
+	store     *store.Store
+	executor  TestExecutor
+	active    ActiveTestProvider
+	logger    *slog.Logger
 	secretSvc *secrets.Service
 
 	mu     sync.Mutex
@@ -50,9 +50,9 @@ type Scheduler struct {
 }
 
 type scheduledExecutionStart struct {
-	execID    string
+	execID     string
 	scheduleID string
-	startedAt time.Time
+	startedAt  time.Time
 }
 
 type scheduledExecutionCompletion struct {

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/shiva-load-testing/controller/internal/model"
 )
@@ -32,26 +33,26 @@ const (
 )
 
 const (
-	DefaultHTTPMethod      = "GET"
-	DefaultContentType     = "application/json"
-	payloadPaddingField    = "_shiva_padding"
-	AuthClientSecretEnvVar = "AUTH_CLIENT_SECRET"
-	AuthEnabledEnvVar      = "AUTH_ENABLED"
-	AuthModeEnvVar         = "AUTH_MODE"
-	AuthTokenURLEnvVar     = "AUTH_TOKEN_URL"
-	AuthClientIDEnvVar     = "AUTH_CLIENT_ID"
-	AuthClientAuthMethodEnvVar = "AUTH_CLIENT_AUTH_METHOD"
-	AuthRefreshSkewEnvVar      = "AUTH_REFRESH_SKEW_SECONDS"
-	AuthRetryLimitEnvVar       = "AUTH_RETRY_LIMIT"
+	DefaultHTTPMethod              = "GET"
+	DefaultContentType             = "application/json"
+	payloadPaddingField            = "_shiva_padding"
+	AuthClientSecretEnvVar         = "AUTH_CLIENT_SECRET"
+	AuthEnabledEnvVar              = "AUTH_ENABLED"
+	AuthModeEnvVar                 = "AUTH_MODE"
+	AuthTokenURLEnvVar             = "AUTH_TOKEN_URL"
+	AuthClientIDEnvVar             = "AUTH_CLIENT_ID"
+	AuthClientAuthMethodEnvVar     = "AUTH_CLIENT_AUTH_METHOD"
+	AuthRefreshSkewEnvVar          = "AUTH_REFRESH_SKEW_SECONDS"
+	AuthRetryLimitEnvVar           = "AUTH_RETRY_LIMIT"
 	AuthRetryableStatusCodesEnvVar = "AUTH_RETRYABLE_STATUS_CODES"
-	AuthMaxJitterMsEnvVar      = "AUTH_MAX_JITTER_MS"
-	AuthTokenTimeoutEnvVar     = "AUTH_TOKEN_TIMEOUT"
-	HTTPMethodEnvVar           = "HTTP_METHOD"
-	ContentTypeEnvVar          = "CONTENT_TYPE"
-	PayloadSourceJSONEnvVar    = "PAYLOAD_SOURCE_JSON"
-	PayloadSourceJSONB64EnvVar = "PAYLOAD_SOURCE_JSON_B64"
-	PayloadTargetBytesEnvVar   = "PAYLOAD_TARGET_BYTES"
-	TargetURLEnvVar            = "TARGET_URL"
+	AuthMaxJitterMsEnvVar          = "AUTH_MAX_JITTER_MS"
+	AuthTokenTimeoutEnvVar         = "AUTH_TOKEN_TIMEOUT"
+	HTTPMethodEnvVar               = "HTTP_METHOD"
+	ContentTypeEnvVar              = "CONTENT_TYPE"
+	PayloadSourceJSONEnvVar        = "PAYLOAD_SOURCE_JSON"
+	PayloadSourceJSONB64EnvVar     = "PAYLOAD_SOURCE_JSON_B64"
+	PayloadTargetBytesEnvVar       = "PAYLOAD_TARGET_BYTES"
+	TargetURLEnvVar                = "TARGET_URL"
 )
 
 // IsControllable returns true if the executor supports Pause/Resume/Scale via REST API.
@@ -630,52 +631,6 @@ export const options = {
   },
 };` + builderRequestSharedTemplate + builderRequestExecutionTemplate
 
-const constantVUsTemplate = `import http from 'k6/http';
-import { check, sleep } from 'k6';
-import exec from 'k6/execution';
-import encoding from 'k6/encoding';
-import { Rate, Counter, Trend } from 'k6/metrics';
-` + builderMetricDeclarations + `
-export const options = {
-  scenarios: {
-    constant_load: {
-      executor: 'constant-vus',
-      vus: {{ .VUs }},
-      duration: '{{ .Duration }}',
-    },
-  },
-  thresholds: {
-    http_req_duration: ['p(95)<1500'],
-    errors: ['rate<0.1'],
-    success_rate: ['rate>0.95'],
-  },
-};` + builderRequestSharedTemplate + builderRequestExecutionTemplate
-
-const rampingVUsTemplate = `import http from 'k6/http';
-import { check, sleep } from 'k6';
-import exec from 'k6/execution';
-import encoding from 'k6/encoding';
-import { Rate, Counter, Trend } from 'k6/metrics';
-` + builderMetricDeclarations + `
-export const options = {
-  scenarios: {
-    ramping_load: {
-      executor: 'ramping-vus',
-      startVUs: 0,
-      stages: [
-{{- range .Stages }}
-        { duration: '{{ .Duration }}', target: {{ .Target }} },
-{{- end }}
-      ],
-    },
-  },
-  thresholds: {
-    http_req_duration: ['p(95)<1500'],
-    errors: ['rate<0.1'],
-    success_rate: ['rate>0.95'],
-  },
-};` + builderRequestSharedTemplate + builderRequestExecutionTemplate
-
 const constantArrivalRateTemplate = `import http from 'k6/http';
 import { check, sleep } from 'k6';
 import exec from 'k6/execution';
@@ -748,26 +703,26 @@ type BuilderPayloadArtifacts struct {
 }
 
 type builderTemplateData struct {
-	URL                  string
-	StartVUs             int
-	MaxVUs               int
-	TotalDuration        string
-	VUs                  int
-	Duration             string
-	Rate                 int
-	TimeUnit             string
-	PreAllocatedVUs      int
-	Stages               interface{}
-	Sleep                float64
-	HTTPMethod           string
-	ContentType          string
-	PayloadSourceJSON    string
-	PayloadTargetBytes   int
-	AuthEnabled          bool
-	AuthMode             string
-	AuthTokenURL         string
-	AuthClientID         string
-	AuthClientAuthMethod string
+	URL                    string
+	StartVUs               int
+	MaxVUs                 int
+	TotalDuration          string
+	VUs                    int
+	Duration               string
+	Rate                   int
+	TimeUnit               string
+	PreAllocatedVUs        int
+	Stages                 any
+	Sleep                  float64
+	HTTPMethod             string
+	ContentType            string
+	PayloadSourceJSON      string
+	PayloadTargetBytes     int
+	AuthEnabled            bool
+	AuthMode               string
+	AuthTokenURL           string
+	AuthClientID           string
+	AuthClientAuthMethod   string
 	AuthRefreshSkewSeconds int
 }
 
@@ -857,7 +812,7 @@ func BuildBuilderPayloadArtifacts(req *model.TestRequest) (*BuilderPayloadArtifa
 		parsedSource = "{}"
 	}
 
-	var parsed interface{}
+	var parsed any
 	if err := json.Unmarshal([]byte(parsedSource), &parsed); err != nil {
 		return nil, fmt.Errorf("payload_json must be valid JSON: %w", err)
 	}
@@ -883,7 +838,7 @@ func validateBuilderHTTPMethod(method string) error {
 	}
 }
 
-func buildExactPayloadContent(parsed interface{}, targetBytes int) (string, error) {
+func buildExactPayloadContent(parsed any, targetBytes int) (string, error) {
 	content, err := marshalCanonicalJSON(parsed)
 	if err != nil {
 		return "", fmt.Errorf("serialize payload: %w", err)
@@ -900,7 +855,7 @@ func buildExactPayloadContent(parsed interface{}, targetBytes int) (string, erro
 		return "", fmt.Errorf("payload_target_kib is smaller than the minimum serialized JSON payload size")
 	}
 
-	objectPayload, ok := parsed.(map[string]interface{})
+	objectPayload, ok := parsed.(map[string]any)
 	if !ok {
 		return "", fmt.Errorf("payload_target_kib requires an object payload unless the serialized JSON already matches the exact target size")
 	}
@@ -912,7 +867,7 @@ func buildExactPayloadContent(parsed interface{}, targetBytes int) (string, erro
 	return padded, nil
 }
 
-func sizeObjectPayload(payload map[string]interface{}, targetBytes int) (string, error) {
+func sizeObjectPayload(payload map[string]any, targetBytes int) (string, error) {
 	if existing, ok := payload[payloadPaddingField]; ok {
 		if _, ok := existing.(string); !ok {
 			return "", fmt.Errorf("reserved payload padding field must be a string when present")
@@ -960,7 +915,7 @@ func sizeObjectPayload(payload map[string]interface{}, targetBytes int) (string,
 	return content, nil
 }
 
-func marshalCanonicalJSON(value interface{}) (string, error) {
+func marshalCanonicalJSON(value any) (string, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return "", err
@@ -1025,15 +980,15 @@ func buildBuilderEnvContract(req *model.TestRequest) map[string]string {
 }
 
 func mergeEnvIntoConfigContent(content string, env map[string]string) (string, error) {
-	config := map[string]interface{}{}
+	config := map[string]any{}
 	if strings.TrimSpace(content) != "" {
 		if err := json.Unmarshal([]byte(content), &config); err != nil {
 			return "", fmt.Errorf("parse config: %w", err)
 		}
 	}
-	envBlock := map[string]interface{}{}
+	envBlock := map[string]any{}
 	if existing, ok := config["env"]; ok && existing != nil {
-		existingMap, ok := existing.(map[string]interface{})
+		existingMap, ok := existing.(map[string]any)
 		if !ok {
 			return "", fmt.Errorf(`"env" must be a JSON object with string values`)
 		}
@@ -1060,7 +1015,7 @@ func BuildBuilderConfig(req *model.TestRequest) (string, error) {
 		executor = "ramping-vus"
 	}
 
-	scenario := map[string]interface{}{
+	scenario := map[string]any{
 		"executor": executor,
 	}
 	switch executor {
@@ -1084,11 +1039,11 @@ func BuildBuilderConfig(req *model.TestRequest) (string, error) {
 		scenario["stages"] = filterBuilderStages(req.Stages)
 	}
 
-	config := map[string]interface{}{
-		"scenarios": map[string]interface{}{
+	config := map[string]any{
+		"scenarios": map[string]any{
 			"default": scenario,
 		},
-		"thresholds": map[string]interface{}{
+		"thresholds": map[string]any{
 			"http_req_duration": []string{"p(95)<500", "p(99)<1000"},
 			"errors":            []string{"rate<0.01"},
 			"success_rate":      []string{"rate>0.99"},
@@ -1106,13 +1061,13 @@ func EnrichBuilderConfig(content string, req *model.TestRequest) (string, error)
 	return mergeEnvIntoConfigContent(content, buildBuilderEnvContract(req))
 }
 
-func filterBuilderStages(stages []model.Stage) []map[string]interface{} {
-	filtered := make([]map[string]interface{}, 0, len(stages))
+func filterBuilderStages(stages []model.Stage) []map[string]any {
+	filtered := make([]map[string]any, 0, len(stages))
 	for _, stage := range stages {
 		if strings.TrimSpace(stage.Duration) == "" {
 			continue
 		}
-		filtered = append(filtered, map[string]interface{}{
+		filtered = append(filtered, map[string]any{
 			"duration": stage.Duration,
 			"target":   stage.Target,
 		})
@@ -1218,10 +1173,7 @@ func generateConstantVUs(req *model.TestRequest, workerCount int) (*BuilderResul
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
 
-	vus := req.VUs
-	if vus < 1 {
-		vus = 1
-	}
+	vus := max(req.VUs, 1)
 	perWorkerVUs := divideAcrossWorkers(vus, workerCount)
 	totalDuration := parseDuration(req.Duration)
 	if totalDuration < 1 {
@@ -1249,10 +1201,7 @@ func generateConstantArrivalRate(req *model.TestRequest, workerCount int) (*Buil
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
 
-	rate := req.Rate
-	if rate < 1 {
-		rate = 1
-	}
+	rate := max(req.Rate, 1)
 	// Divide rate across workers
 	rate = divideAcrossWorkers(rate, workerCount)
 	timeUnit := req.TimeUnit
@@ -1313,10 +1262,7 @@ func generateRampingArrivalRate(req *model.TestRequest, workerCount int) (*Build
 	}
 	preAlloc := req.PreAllocatedVUs
 	if preAlloc < 1 {
-		preAlloc = divideAcrossWorkers(maxTarget, workerCount)
-		if preAlloc < 1 {
-			preAlloc = 1
-		}
+		preAlloc = max(divideAcrossWorkers(maxTarget, workerCount), 1)
 	} else {
 		preAlloc = divideAcrossWorkers(preAlloc, workerCount)
 	}
@@ -1361,10 +1307,7 @@ func divideAcrossWorkers(total, workers int) int {
 	if workers <= 1 {
 		return total
 	}
-	result := (total + workers - 1) / workers
-	if result < 1 {
-		result = 1
-	}
+	result := max((total+workers-1)/workers, 1)
 	return result
 }
 
@@ -1381,8 +1324,10 @@ func parseDuration(d string) int {
 		return 0
 	}
 	unit := d[len(d)-1]
-	val := 0
-	fmt.Sscanf(d[:len(d)-1], "%d", &val)
+	val, err := strconv.Atoi(d[:len(d)-1])
+	if err != nil {
+		return 0
+	}
 	switch unit {
 	case 's':
 		return val
@@ -1560,7 +1505,7 @@ func ValidateAndProcessConfig(content string, workerCount int) (*ProcessedConfig
 	if len(content) > 1<<20 {
 		return nil, fmt.Errorf("config exceeds 1 MB size limit")
 	}
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
@@ -1569,7 +1514,7 @@ func ValidateAndProcessConfig(content string, workerCount int) (*ProcessedConfig
 	// stays in config.json so scripts reading options.env still work).
 	envVars := make(map[string]string)
 	if envObj, ok := parsed["env"]; ok {
-		if envMap, ok := envObj.(map[string]interface{}); ok {
+		if envMap, ok := envObj.(map[string]any); ok {
 			for k, v := range envMap {
 				envVars[k] = fmt.Sprintf("%v", v)
 			}
@@ -1607,7 +1552,7 @@ func ValidateAndProcessConfig(content string, workerCount int) (*ProcessedConfig
 	if detectedExecutor.IsControllable() && detectedExecutor != ExecutorExternallyControlled {
 		// Transform VU-based scenarios (ramping-vus, constant-vus) to externally-controlled
 		if scenarios, ok := parsed["scenarios"]; ok {
-			if scenarioMap, ok := scenarios.(map[string]interface{}); ok {
+			if scenarioMap, ok := scenarios.(map[string]any); ok {
 				extractedStages = transformVUScenarios(scenarioMap)
 				parsed["scenarios"] = scenarioMap // write back the transformed map
 			}
@@ -1619,7 +1564,7 @@ func ValidateAndProcessConfig(content string, workerCount int) (*ProcessedConfig
 	// resulting in N× the intended total throughput.
 	if workerCount > 1 {
 		if scenarios, ok := parsed["scenarios"]; ok {
-			if scenarioMap, ok := scenarios.(map[string]interface{}); ok {
+			if scenarioMap, ok := scenarios.(map[string]any); ok {
 				divideForWorkers(scenarioMap, workerCount)
 			}
 		}
@@ -1642,11 +1587,11 @@ func ValidateAndProcessConfig(content string, workerCount int) (*ProcessedConfig
 // transformVUScenarios finds ramping-vus and constant-vus scenarios, extracts their
 // stage/VU info, and replaces them with externally-controlled executors so the controller
 // can manage VU ramping with Pause/Resume/Scale support.
-func transformVUScenarios(scenarioMap map[string]interface{}) []model.Stage {
+func transformVUScenarios(scenarioMap map[string]any) []model.Stage {
 	var allStages []model.Stage
 
 	for name, sc := range scenarioMap {
-		scMap, ok := sc.(map[string]interface{})
+		scMap, ok := sc.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -1658,7 +1603,7 @@ func transformVUScenarios(scenarioMap map[string]interface{}) []model.Stage {
 			if !ok {
 				continue
 			}
-			stagesSlice, ok := stagesRaw.([]interface{})
+			stagesSlice, ok := stagesRaw.([]any)
 			if !ok {
 				continue
 			}
@@ -1666,7 +1611,7 @@ func transformVUScenarios(scenarioMap map[string]interface{}) []model.Stage {
 			maxVUs := 0
 			totalDurationSec := 0
 			for _, stageRaw := range stagesSlice {
-				stageMap, ok := stageRaw.(map[string]interface{})
+				stageMap, ok := stageRaw.(map[string]any)
 				if !ok {
 					continue
 				}
@@ -1686,7 +1631,7 @@ func transformVUScenarios(scenarioMap map[string]interface{}) []model.Stage {
 			}
 			totalDurationSec += completionBufferSeconds // buffer
 
-			scenarioMap[name] = map[string]interface{}{
+			scenarioMap[name] = map[string]any{
 				"executor": "externally-controlled",
 				"vus":      0,
 				"maxVUs":   maxVUs,
@@ -1717,7 +1662,7 @@ func transformVUScenarios(scenarioMap map[string]interface{}) []model.Stage {
 				model.Stage{Duration: dur, Target: vus},
 			)
 
-			scenarioMap[name] = map[string]interface{}{
+			scenarioMap[name] = map[string]any{
 				"executor": "externally-controlled",
 				"vus":      0,   // start at 0; RampingManager sets correct total VU count
 				"maxVUs":   vus, // per-worker ceiling
@@ -1761,9 +1706,9 @@ func transformVUScenarios(scenarioMap map[string]interface{}) []model.Stage {
 // across all workers equals the user's intended total.
 // VU-based executors (already transformed to externally-controlled) are NOT
 // divided here — the RampingManager distributes VUs via ScaleVUs calls.
-func divideForWorkers(scenarioMap map[string]interface{}, workerCount int) {
+func divideForWorkers(scenarioMap map[string]any, workerCount int) {
 	for _, sc := range scenarioMap {
-		scMap, ok := sc.(map[string]interface{})
+		scMap, ok := sc.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -1779,23 +1724,87 @@ func divideForWorkers(scenarioMap map[string]interface{}, workerCount int) {
 			divideIntVal(scMap, "startRate", workerCount)
 			divideIntVal(scMap, "preAllocatedVUs", workerCount)
 			divideIntVal(scMap, "maxVUs", workerCount)
-			if stages, ok := scMap["stages"].([]interface{}); ok {
+			if stages, ok := scMap["stages"].([]any); ok {
 				for _, stageRaw := range stages {
-					if stageMap, ok := stageRaw.(map[string]interface{}); ok {
+					if stageMap, ok := stageRaw.(map[string]any); ok {
 						divideIntVal(stageMap, "target", workerCount)
 					}
 				}
 			}
 
-		// externally-controlled / VU-based: RampingManager distributes via ScaleVUs.
-		// Do NOT divide maxVUs — it's a per-worker ceiling that must remain generous
-		// so manual scaling and stage targets can be fulfilled.
+			// externally-controlled / VU-based: RampingManager distributes via ScaleVUs.
+			// Do NOT divide maxVUs — it's a per-worker ceiling that must remain generous
+			// so manual scaling and stage targets can be fulfilled.
 		}
 	}
 }
 
 // divideIntVal divides a numeric JSON value by workerCount using ceiling division.
-func divideIntVal(m map[string]interface{}, key string, workers int) {
+func scenarioDurationSeconds(scMap map[string]any) int {
+	executor, _ := scMap["executor"].(string)
+	switch executor {
+	case "ramping-vus", "ramping-arrival-rate":
+		total := 0
+		if stages, ok := scMap["stages"].([]any); ok {
+			for _, stageRaw := range stages {
+				stageMap, ok := stageRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				dur, _ := stageMap["duration"].(string)
+				total += parseDuration(dur)
+			}
+		}
+		return total
+	default:
+		dur, _ := scMap["duration"].(string)
+		return parseDuration(dur)
+	}
+}
+
+// EstimateConfiguredExecutionDuration returns the intended scenario runtime from
+// raw k6 options JSON. It intentionally excludes the controller completion
+// buffer and is used to guard against premature native-run completion.
+func EstimateConfiguredExecutionDuration(content string) time.Duration {
+	if strings.TrimSpace(content) == "" {
+		return 0
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return 0
+	}
+	maxSeconds := 0
+	if scenariosRaw, ok := parsed["scenarios"].(map[string]any); ok {
+		for _, scenarioRaw := range scenariosRaw {
+			scMap, ok := scenarioRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if seconds := scenarioDurationSeconds(scMap); seconds > maxSeconds {
+				maxSeconds = seconds
+			}
+		}
+	}
+	if maxSeconds == 0 {
+		if stages, ok := parsed["stages"].([]any); ok {
+			for _, stageRaw := range stages {
+				stageMap, ok := stageRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				dur, _ := stageMap["duration"].(string)
+				maxSeconds += parseDuration(dur)
+			}
+		} else if dur, ok := parsed["duration"].(string); ok {
+			maxSeconds = parseDuration(dur)
+		}
+	}
+	if maxSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(maxSeconds) * time.Second
+}
+func divideIntVal(m map[string]any, key string, workers int) {
 	v, ok := m[key].(float64)
 	if !ok || v <= 0 {
 		return
@@ -1809,7 +1818,7 @@ func divideIntVal(m map[string]interface{}, key string, workers int) {
 
 // DetectExecutorFromConfig inspects the parsed config JSON for scenarios and returns the executor type.
 // If multiple scenarios use different executors, the first one is returned.
-func DetectExecutorFromConfig(parsed map[string]interface{}) ExecutorType {
+func DetectExecutorFromConfig(parsed map[string]any) ExecutorType {
 	scenarios, ok := parsed["scenarios"]
 	if !ok {
 		// No scenarios — check for top-level stages/vus/duration
@@ -1822,13 +1831,13 @@ func DetectExecutorFromConfig(parsed map[string]interface{}) ExecutorType {
 		return ExecutorConstantVUs // default
 	}
 
-	scenarioMap, ok := scenarios.(map[string]interface{})
+	scenarioMap, ok := scenarios.(map[string]any)
 	if !ok {
 		return ExecutorConstantVUs
 	}
 
 	for _, sc := range scenarioMap {
-		scMap, ok := sc.(map[string]interface{})
+		scMap, ok := sc.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -1921,7 +1930,7 @@ func StripScriptOptions(script string) string {
 func CheckConflicts(scriptContent, configContent string) []model.ConflictWarning {
 	var warnings []model.ConflictWarning
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal([]byte(configContent), &config); err != nil {
 		return warnings
 	}
@@ -1960,9 +1969,9 @@ func CheckConflicts(scriptContent, configContent string) []model.ConflictWarning
 
 	// 2. Entry-point: config has scenarios with exec functions not in script
 	if scenarios, ok := config["scenarios"]; ok {
-		if scenarioMap, ok := scenarios.(map[string]interface{}); ok {
+		if scenarioMap, ok := scenarios.(map[string]any); ok {
 			for name, sc := range scenarioMap {
-				if scMap, ok := sc.(map[string]interface{}); ok {
+				if scMap, ok := sc.(map[string]any); ok {
 					if exec, ok := scMap["exec"].(string); ok && exec != "default" {
 						pattern := fmt.Sprintf(`export\s+(function|const|let|var)\s+%s`, regexp.QuoteMeta(exec))
 						matched, _ := regexp.MatchString(pattern, scriptContent)
@@ -1980,7 +1989,7 @@ func CheckConflicts(scriptContent, configContent string) []model.ConflictWarning
 
 	// 3. Metric consistency: thresholds reference custom metrics not in script
 	if thresholds, ok := config["thresholds"]; ok {
-		if thMap, ok := thresholds.(map[string]interface{}); ok {
+		if thMap, ok := thresholds.(map[string]any); ok {
 			builtins := map[string]bool{
 				"http_req_duration": true, "http_req_failed": true, "http_req_waiting": true,
 				"http_req_connecting": true, "http_req_tls_handshaking": true, "http_req_sending": true,

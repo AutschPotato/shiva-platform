@@ -139,8 +139,8 @@ type LoadTest struct {
 	ResultJSON        json.RawMessage `json:"result_json,omitempty"`
 	ScriptContent     string          `json:"script_content,omitempty"`
 	ConfigContent     string          `json:"config_content,omitempty"`
-	PayloadSourceJSON string      `json:"payload_source_json,omitempty"`
-	PayloadContent string         `json:"payload_content,omitempty"`
+	PayloadSourceJSON string          `json:"payload_source_json,omitempty"`
+	PayloadContent    string          `json:"payload_content,omitempty"`
 	HTTPMethod        string          `json:"http_method,omitempty"`
 	ContentType       string          `json:"content_type,omitempty"`
 	AuthConfig        AuthConfig      `json:"auth,omitempty"`
@@ -150,24 +150,24 @@ type LoadTest struct {
 }
 
 type TestRequest struct {
-	ProjectName     string   `json:"project_name"`
-	URL             string   `json:"url"`
-	Executor        string   `json:"executor,omitempty"` // "ramping-vus", "constant-vus", "constant-arrival-rate", "ramping-arrival-rate"
-	Stages          []Stage  `json:"stages,omitempty"`
-	VUs             int      `json:"vus,omitempty"`               // constant-vus
-	Duration        string   `json:"duration,omitempty"`          // constant-vus, constant-arrival-rate
-	Rate            int      `json:"rate,omitempty"`              // constant-arrival-rate
-	TimeUnit        string   `json:"time_unit,omitempty"`         // arrival-rate: "1s" or "1m"
-	PreAllocatedVUs int      `json:"pre_allocated_vus,omitempty"` // arrival-rate
-	MaxVUs          int      `json:"max_vus,omitempty"`           // arrival-rate
-	SleepSeconds    *float64 `json:"sleep_seconds,omitempty"`     // think-time between iterations (default 0.5 for VU executors, 0 for arrival-rate)
-	ScriptContent   string   `json:"script_content,omitempty"`
-	ConfigContent   string   `json:"config_content,omitempty"`
-	HTTPMethod      string   `json:"http_method,omitempty"`
-	ContentType     string   `json:"content_type,omitempty"`
-	PayloadJSON     string   `json:"payload_json,omitempty"`
-	PayloadTargetKiB int     `json:"payload_target_kib,omitempty"`
-	Auth            AuthInput `json:"auth,omitempty"`
+	ProjectName      string    `json:"project_name"`
+	URL              string    `json:"url"`
+	Executor         string    `json:"executor,omitempty"` // "ramping-vus", "constant-vus", "constant-arrival-rate", "ramping-arrival-rate"
+	Stages           []Stage   `json:"stages,omitempty"`
+	VUs              int       `json:"vus,omitempty"`               // constant-vus
+	Duration         string    `json:"duration,omitempty"`          // constant-vus, constant-arrival-rate
+	Rate             int       `json:"rate,omitempty"`              // constant-arrival-rate
+	TimeUnit         string    `json:"time_unit,omitempty"`         // arrival-rate: "1s" or "1m"
+	PreAllocatedVUs  int       `json:"pre_allocated_vus,omitempty"` // arrival-rate
+	MaxVUs           int       `json:"max_vus,omitempty"`           // arrival-rate
+	SleepSeconds     *float64  `json:"sleep_seconds,omitempty"`     // think-time between iterations (default 0.5 for VU executors, 0 for arrival-rate)
+	ScriptContent    string    `json:"script_content,omitempty"`
+	ConfigContent    string    `json:"config_content,omitempty"`
+	HTTPMethod       string    `json:"http_method,omitempty"`
+	ContentType      string    `json:"content_type,omitempty"`
+	PayloadJSON      string    `json:"payload_json,omitempty"`
+	PayloadTargetKiB int       `json:"payload_target_kib,omitempty"`
+	Auth             AuthInput `json:"auth,omitempty"`
 }
 
 // Stage is shared by builder-mode tests, templates and schedules.
@@ -266,28 +266,28 @@ type ResultListResponse struct {
 }
 
 type AggregatedMetrics struct {
-	TotalVUs      int             `json:"total_vus"`
-	TotalRequests float64         `json:"total_requests"`
-	BusinessRequests float64      `json:"business_requests,omitempty"`
-	AvgLatency    float64         `json:"avg_latency_ms"`
-	MedLatency    float64         `json:"med_latency_ms"`
-	P90Latency    float64         `json:"p90_latency_ms"`
-	P95Latency    float64         `json:"p95_latency_ms"`
-	P99Latency    float64         `json:"p99_latency_ms"`
-	MinLatency    float64         `json:"min_latency_ms"`
-	MaxLatency    float64         `json:"max_latency_ms"`
-	ErrorRate     float64         `json:"error_rate"`
-	SuccessRate   float64         `json:"success_rate"`
-	RPS           float64         `json:"rps"`
-	Iterations    float64         `json:"iterations"`
-	DataReceived  float64         `json:"data_received_bytes"`
-	DataSent      float64         `json:"data_sent_bytes"`
-	HTTPFailures  float64         `json:"http_failures"`
-	HTTPSuccesses float64         `json:"http_successes"`
-	Status4xx     float64         `json:"status_4xx"`
-	Status5xx     float64         `json:"status_5xx"`
-	Workers       []WorkerMetrics `json:"workers"`
-	Thresholds    []ThresholdResult `json:"thresholds,omitempty"`
+	TotalVUs         int               `json:"total_vus"`
+	TotalRequests    float64           `json:"total_requests"`
+	BusinessRequests float64           `json:"business_requests,omitempty"`
+	AvgLatency       float64           `json:"avg_latency_ms"`
+	MedLatency       float64           `json:"med_latency_ms"`
+	P90Latency       float64           `json:"p90_latency_ms"`
+	P95Latency       float64           `json:"p95_latency_ms"`
+	P99Latency       float64           `json:"p99_latency_ms"`
+	MinLatency       float64           `json:"min_latency_ms"`
+	MaxLatency       float64           `json:"max_latency_ms"`
+	ErrorRate        float64           `json:"error_rate"`
+	SuccessRate      float64           `json:"success_rate"`
+	RPS              float64           `json:"rps"`
+	Iterations       float64           `json:"iterations"`
+	DataReceived     float64           `json:"data_received_bytes"`
+	DataSent         float64           `json:"data_sent_bytes"`
+	HTTPFailures     float64           `json:"http_failures"`
+	HTTPSuccesses    float64           `json:"http_successes"`
+	Status4xx        float64           `json:"status_4xx"`
+	Status5xx        float64           `json:"status_5xx"`
+	Workers          []WorkerMetrics   `json:"workers"`
+	Thresholds       []ThresholdResult `json:"thresholds,omitempty"`
 }
 
 type MetricQualityFlag struct {
@@ -360,17 +360,17 @@ type LatencyBreakdownBlock struct {
 }
 
 type WorkerMetricsV2 struct {
-	Address          string  `json:"address"`
-	Status           string  `json:"status"`
-	Error            string  `json:"error,omitempty"`
-	Requests         float64 `json:"requests"`
-	BusinessRequests float64 `json:"business_requests"`
+	Address           string  `json:"address"`
+	Status            string  `json:"status"`
+	Error             string  `json:"error,omitempty"`
+	Requests          float64 `json:"requests"`
+	BusinessRequests  float64 `json:"business_requests"`
 	AuxiliaryRequests float64 `json:"auxiliary_requests"`
-	AvgLatencyMs     float64 `json:"avg_latency_ms"`
-	P95LatencyMs     float64 `json:"p95_latency_ms"`
-	P99LatencyMs     float64 `json:"p99_latency_ms"`
-	ErrorRate        float64 `json:"error_rate"`
-	ActiveDurationS  float64 `json:"active_duration_s,omitempty"`
+	AvgLatencyMs      float64 `json:"avg_latency_ms"`
+	P95LatencyMs      float64 `json:"p95_latency_ms"`
+	P99LatencyMs      float64 `json:"p99_latency_ms"`
+	ErrorRate         float64 `json:"error_rate"`
+	ActiveDurationS   float64 `json:"active_duration_s,omitempty"`
 }
 
 type MetricsV2 struct {
@@ -419,108 +419,108 @@ type WorkerDashboardStatus struct {
 // P99 is intentionally omitted — the k6 REST API does not provide it live.
 // Real P99 values are captured via handleSummary after test completion.
 type TimePoint struct {
-	ElapsedSec    float64 `json:"t"`
-	TotalVUs      int     `json:"vus"`
-	RPS           float64 `json:"rps"`
-	AvgLatency    float64 `json:"avg_ms"`
-	P95Latency    float64 `json:"p95_ms"`
-	TotalRequests float64 `json:"reqs"`
+	ElapsedSec       float64 `json:"t"`
+	TotalVUs         int     `json:"vus"`
+	RPS              float64 `json:"rps"`
+	AvgLatency       float64 `json:"avg_ms"`
+	P95Latency       float64 `json:"p95_ms"`
+	TotalRequests    float64 `json:"reqs"`
 	BusinessRequests float64 `json:"business_reqs,omitempty"`
-	ErrorRate     float64 `json:"err_rate"`
-	Status4xx     float64 `json:"status_4xx"`
-	Status5xx     float64 `json:"status_5xx"`
+	ErrorRate        float64 `json:"err_rate"`
+	Status4xx        float64 `json:"status_4xx"`
+	Status5xx        float64 `json:"status_5xx"`
 }
 
 // TestMetadata holds contextual information about the test run.
 type TestMetadata struct {
-	StartedAt   time.Time `json:"started_at"`
-	EndedAt     time.Time `json:"ended_at"`
-	DurationS   float64   `json:"duration_s"`
-	WorkerCount int      `json:"worker_count"`
-	Stages       []Stage  `json:"stages,omitempty"`
-	ScriptURL    string   `json:"script_url,omitempty"`
+	StartedAt   time.Time        `json:"started_at"`
+	EndedAt     time.Time        `json:"ended_at"`
+	DurationS   float64          `json:"duration_s"`
+	WorkerCount int              `json:"worker_count"`
+	Stages      []Stage          `json:"stages,omitempty"`
+	ScriptURL   string           `json:"script_url,omitempty"`
 	Payload     *PayloadMetadata `json:"payload,omitempty"`
 	Auth        *AuthMetadata    `json:"auth,omitempty"`
 }
 
 type PayloadMetadata struct {
-	HTTPMethod        string  `json:"http_method"`
-	ContentType       string  `json:"content_type"`
-	TargetBytes       int     `json:"payload_target_bytes"`
-	TargetKiB         float64 `json:"payload_target_kib"`
-	TargetKB          float64 `json:"payload_target_kb"`
-	ActualBytes       int     `json:"payload_actual_bytes"`
-	ActualKiB         float64 `json:"payload_actual_kib"`
-	ActualKB          float64 `json:"payload_actual_kb"`
+	HTTPMethod  string  `json:"http_method"`
+	ContentType string  `json:"content_type"`
+	TargetBytes int     `json:"payload_target_bytes"`
+	TargetKiB   float64 `json:"payload_target_kib"`
+	TargetKB    float64 `json:"payload_target_kb"`
+	ActualBytes int     `json:"payload_actual_bytes"`
+	ActualKiB   float64 `json:"payload_actual_kib"`
+	ActualKB    float64 `json:"payload_actual_kb"`
 }
 
 type AuthMetadata struct {
-	Mode               string `json:"mode,omitempty"`
-	TokenURL           string `json:"token_url,omitempty"`
-	ClientAuthMethod   string `json:"client_auth_method,omitempty"`
-	RefreshSkewSeconds int    `json:"refresh_skew_seconds,omitempty"`
-	SecretSource       string `json:"secret_source,omitempty"`
-	MetricsStatus      string `json:"metrics_status,omitempty"`
-	MetricsMessage     string `json:"metrics_message,omitempty"`
+	Mode               string              `json:"mode,omitempty"`
+	TokenURL           string              `json:"token_url,omitempty"`
+	ClientAuthMethod   string              `json:"client_auth_method,omitempty"`
+	RefreshSkewSeconds int                 `json:"refresh_skew_seconds,omitempty"`
+	SecretSource       string              `json:"secret_source,omitempty"`
+	MetricsStatus      string              `json:"metrics_status,omitempty"`
+	MetricsMessage     string              `json:"metrics_message,omitempty"`
 	Metrics            *AuthRuntimeMetrics `json:"metrics,omitempty"`
 }
 
 type AuthRuntimeMetrics struct {
-	TokenRequestsTotal   float64 `json:"token_requests_total"`
-	TokenSuccessTotal    float64 `json:"token_success_total"`
-	TokenFailureTotal    float64 `json:"token_failure_total"`
-	TokenSuccessRate     float64 `json:"token_success_rate"`
-	TokenRequestAvgMs    float64 `json:"token_request_avg_ms"`
-	TokenRequestP95Ms    float64 `json:"token_request_p95_ms"`
-	TokenRequestP99Ms    float64 `json:"token_request_p99_ms"`
-	TokenRequestMaxMs    float64 `json:"token_request_max_ms"`
-	TokenRefreshTotal    float64 `json:"token_refresh_total"`
-	TokenReuseHitsTotal  float64 `json:"token_reuse_hits_total"`
+	TokenRequestsTotal   float64           `json:"token_requests_total"`
+	TokenSuccessTotal    float64           `json:"token_success_total"`
+	TokenFailureTotal    float64           `json:"token_failure_total"`
+	TokenSuccessRate     float64           `json:"token_success_rate"`
+	TokenRequestAvgMs    float64           `json:"token_request_avg_ms"`
+	TokenRequestP95Ms    float64           `json:"token_request_p95_ms"`
+	TokenRequestP99Ms    float64           `json:"token_request_p99_ms"`
+	TokenRequestMaxMs    float64           `json:"token_request_max_ms"`
+	TokenRefreshTotal    float64           `json:"token_refresh_total"`
+	TokenReuseHitsTotal  float64           `json:"token_reuse_hits_total"`
 	ResponseStatusCodes  []StatusCodeCount `json:"response_status_codes,omitempty"`
-	AbortTriggered       bool    `json:"abort_triggered,omitempty"`
-	AbortCause           string  `json:"abort_cause,omitempty"`
-	AbortReason          string  `json:"abort_reason,omitempty"`
-	AbortHTTPStatusCodes []int   `json:"abort_http_status_codes,omitempty"`
-	AbortRetryable       bool    `json:"abort_retryable,omitempty"`
+	AbortTriggered       bool              `json:"abort_triggered,omitempty"`
+	AbortCause           string            `json:"abort_cause,omitempty"`
+	AbortReason          string            `json:"abort_reason,omitempty"`
+	AbortHTTPStatusCodes []int             `json:"abort_http_status_codes,omitempty"`
+	AbortRetryable       bool              `json:"abort_retryable,omitempty"`
 }
 
 // --- Templates ---
 
 type TestTemplate struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	Mode          string    `json:"mode"` // "builder" or "upload"
-	URL           string    `json:"url,omitempty"`
-	Stages        []Stage   `json:"stages,omitempty"`
-	ScriptContent string    `json:"script_content,omitempty"`
-	ConfigContent string    `json:"config_content,omitempty"`
-	HTTPMethod    string    `json:"http_method,omitempty"`
-	ContentType   string    `json:"content_type,omitempty"`
-	PayloadJSON   string    `json:"payload_json,omitempty"`
-	PayloadTargetKiB int    `json:"payload_target_kib,omitempty"`
-	AuthConfig    AuthConfig `json:"auth,omitempty"`
-	Executor      string    `json:"executor,omitempty"`
-	System        bool      `json:"system"`
-	UserID        int64     `json:"user_id"`
-	Username      string    `json:"username"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description"`
+	Mode             string     `json:"mode"` // "builder" or "upload"
+	URL              string     `json:"url,omitempty"`
+	Stages           []Stage    `json:"stages,omitempty"`
+	ScriptContent    string     `json:"script_content,omitempty"`
+	ConfigContent    string     `json:"config_content,omitempty"`
+	HTTPMethod       string     `json:"http_method,omitempty"`
+	ContentType      string     `json:"content_type,omitempty"`
+	PayloadJSON      string     `json:"payload_json,omitempty"`
+	PayloadTargetKiB int        `json:"payload_target_kib,omitempty"`
+	AuthConfig       AuthConfig `json:"auth,omitempty"`
+	Executor         string     `json:"executor,omitempty"`
+	System           bool       `json:"system"`
+	UserID           int64      `json:"user_id"`
+	Username         string     `json:"username"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type TestTemplateRequest struct {
-	Name          string  `json:"name"`
-	Description   string  `json:"description"`
-	Mode          string  `json:"mode"`
-	URL           string  `json:"url,omitempty"`
-	Stages        []Stage `json:"stages,omitempty"`
-	ScriptContent string  `json:"script_content,omitempty"`
-	ConfigContent string  `json:"config_content,omitempty"`
-	HTTPMethod    string  `json:"http_method,omitempty"`
-	ContentType   string  `json:"content_type,omitempty"`
-	PayloadJSON   string  `json:"payload_json,omitempty"`
-	PayloadTargetKiB int  `json:"payload_target_kib,omitempty"`
-	Auth          AuthInput `json:"auth,omitempty"`
+	Name             string    `json:"name"`
+	Description      string    `json:"description"`
+	Mode             string    `json:"mode"`
+	URL              string    `json:"url,omitempty"`
+	Stages           []Stage   `json:"stages,omitempty"`
+	ScriptContent    string    `json:"script_content,omitempty"`
+	ConfigContent    string    `json:"config_content,omitempty"`
+	HTTPMethod       string    `json:"http_method,omitempty"`
+	ContentType      string    `json:"content_type,omitempty"`
+	PayloadJSON      string    `json:"payload_json,omitempty"`
+	PayloadTargetKiB int       `json:"payload_target_kib,omitempty"`
+	Auth             AuthInput `json:"auth,omitempty"`
 }
 
 // --- Scheduling ---
@@ -564,24 +564,24 @@ type ScheduledTest struct {
 // ToTestRequest converts a ScheduledTest to a TestRequest for execution.
 func (s *ScheduledTest) ToTestRequest() TestRequest {
 	return TestRequest{
-		ProjectName:     s.ProjectName,
-		URL:             s.URL,
-		Executor:        s.Executor,
-		Stages:          s.Stages,
-		VUs:             s.VUs,
-		Duration:        s.Duration,
-		Rate:            s.Rate,
-		TimeUnit:        s.TimeUnit,
-		PreAllocatedVUs: s.PreAllocatedVUs,
-		MaxVUs:          s.MaxVUs,
-		SleepSeconds:    s.SleepSeconds,
-		ScriptContent:   s.ScriptContent,
-		ConfigContent:   s.ConfigContent,
-		HTTPMethod:      s.HTTPMethod,
-		ContentType:     s.ContentType,
-		PayloadJSON:     s.PayloadJSON,
+		ProjectName:      s.ProjectName,
+		URL:              s.URL,
+		Executor:         s.Executor,
+		Stages:           s.Stages,
+		VUs:              s.VUs,
+		Duration:         s.Duration,
+		Rate:             s.Rate,
+		TimeUnit:         s.TimeUnit,
+		PreAllocatedVUs:  s.PreAllocatedVUs,
+		MaxVUs:           s.MaxVUs,
+		SleepSeconds:     s.SleepSeconds,
+		ScriptContent:    s.ScriptContent,
+		ConfigContent:    s.ConfigContent,
+		HTTPMethod:       s.HTTPMethod,
+		ContentType:      s.ContentType,
+		PayloadJSON:      s.PayloadJSON,
 		PayloadTargetKiB: s.PayloadTargetKiB,
-		Auth:            AuthInput{
+		Auth: AuthInput{
 			Enabled:            s.AuthConfig.Enabled,
 			Mode:               s.AuthConfig.Mode,
 			TokenURL:           s.AuthConfig.TokenURL,
@@ -606,44 +606,44 @@ type ScheduleExecution struct {
 }
 
 type CreateScheduleRequest struct {
-	Name               string   `json:"name"`
-	ProjectName        string   `json:"project_name"`
-	URL                string   `json:"url"`
-	Mode               string   `json:"mode"`
-	Executor           string   `json:"executor,omitempty"`
-	Stages             []Stage  `json:"stages,omitempty"`
-	VUs                int      `json:"vus,omitempty"`
-	Duration           string   `json:"duration,omitempty"`
-	Rate               int      `json:"rate,omitempty"`
-	TimeUnit           string   `json:"time_unit,omitempty"`
-	PreAllocatedVUs    int      `json:"pre_allocated_vus,omitempty"`
-	MaxVUs             int      `json:"max_vus,omitempty"`
-	SleepSeconds       *float64 `json:"sleep_seconds,omitempty"`
-	ScriptContent      string   `json:"script_content,omitempty"`
-	ConfigContent      string   `json:"config_content,omitempty"`
-	HTTPMethod         string   `json:"http_method,omitempty"`
-	ContentType        string   `json:"content_type,omitempty"`
-	PayloadJSON        string   `json:"payload_json,omitempty"`
-	PayloadTargetKiB   int      `json:"payload_target_kib,omitempty"`
+	Name               string    `json:"name"`
+	ProjectName        string    `json:"project_name"`
+	URL                string    `json:"url"`
+	Mode               string    `json:"mode"`
+	Executor           string    `json:"executor,omitempty"`
+	Stages             []Stage   `json:"stages,omitempty"`
+	VUs                int       `json:"vus,omitempty"`
+	Duration           string    `json:"duration,omitempty"`
+	Rate               int       `json:"rate,omitempty"`
+	TimeUnit           string    `json:"time_unit,omitempty"`
+	PreAllocatedVUs    int       `json:"pre_allocated_vus,omitempty"`
+	MaxVUs             int       `json:"max_vus,omitempty"`
+	SleepSeconds       *float64  `json:"sleep_seconds,omitempty"`
+	ScriptContent      string    `json:"script_content,omitempty"`
+	ConfigContent      string    `json:"config_content,omitempty"`
+	HTTPMethod         string    `json:"http_method,omitempty"`
+	ContentType        string    `json:"content_type,omitempty"`
+	PayloadJSON        string    `json:"payload_json,omitempty"`
+	PayloadTargetKiB   int       `json:"payload_target_kib,omitempty"`
 	Auth               AuthInput `json:"auth,omitempty"`
-	ScheduledAt        string   `json:"scheduled_at"`
-	EstimatedDurationS int      `json:"estimated_duration_s,omitempty"`
-	Timezone           string   `json:"timezone"`
-	RecurrenceType     string   `json:"recurrence_type"`
-	RecurrenceRule     string   `json:"recurrence_rule,omitempty"`
-	RecurrenceEnd      *string  `json:"recurrence_end,omitempty"`
+	ScheduledAt        string    `json:"scheduled_at"`
+	EstimatedDurationS int       `json:"estimated_duration_s,omitempty"`
+	Timezone           string    `json:"timezone"`
+	RecurrenceType     string    `json:"recurrence_type"`
+	RecurrenceRule     string    `json:"recurrence_rule,omitempty"`
+	RecurrenceEnd      *string   `json:"recurrence_end,omitempty"`
 }
 
 type CalendarEvent struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	ProjectName     string `json:"project_name"`
-	Start           string `json:"start"`
-	End             string `json:"end"`
-	Status          string `json:"status"`
-	RecurrenceType  string `json:"recurrence_type"`
-	Username        string `json:"username"`
-	UserID          int64  `json:"user_id"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	ProjectName    string `json:"project_name"`
+	Start          string `json:"start"`
+	End            string `json:"end"`
+	Status         string `json:"status"`
+	RecurrenceType string `json:"recurrence_type"`
+	Username       string `json:"username"`
+	UserID         int64  `json:"user_id"`
 }
 
 type ScheduleConflict struct {
@@ -657,17 +657,17 @@ type ScheduleConflict struct {
 // --- Persisted test results ---
 
 type TestResult struct {
-	ID             string             `json:"id"`
-	ProjectName    string             `json:"project_name"`
-	URL            string             `json:"url"`
-	Status         string             `json:"status"`
-	Metrics        *AggregatedMetrics `json:"metrics,omitempty"`
-	MetricsV2      *MetricsV2         `json:"metrics_v2,omitempty"`
-	TimeSeries     []TimePoint        `json:"time_series,omitempty"`
-	Metadata       *TestMetadata      `json:"metadata,omitempty"`
-	Warnings       []ConflictWarning  `json:"warnings,omitempty"`
-	SummaryContent string             `json:"summary_content,omitempty"`
-	AuthSummaryContent string         `json:"auth_summary_content,omitempty"`
-	CreatedAt      time.Time          `json:"created_at"`
-	Username       string             `json:"username"`
+	ID                 string             `json:"id"`
+	ProjectName        string             `json:"project_name"`
+	URL                string             `json:"url"`
+	Status             string             `json:"status"`
+	Metrics            *AggregatedMetrics `json:"metrics,omitempty"`
+	MetricsV2          *MetricsV2         `json:"metrics_v2,omitempty"`
+	TimeSeries         []TimePoint        `json:"time_series,omitempty"`
+	Metadata           *TestMetadata      `json:"metadata,omitempty"`
+	Warnings           []ConflictWarning  `json:"warnings,omitempty"`
+	SummaryContent     string             `json:"summary_content,omitempty"`
+	AuthSummaryContent string             `json:"auth_summary_content,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
+	Username           string             `json:"username"`
 }

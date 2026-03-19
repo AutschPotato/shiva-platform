@@ -209,7 +209,7 @@ func (h *TemplateHandler) List(w http.ResponseWriter, r *http.Request) {
 	if templates == nil {
 		templates = []model.TestTemplate{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"templates": templates,
 		"total":     len(templates),
 	})
@@ -450,7 +450,7 @@ func (h *TemplateHandler) ImportSystemTemplates(w http.ResponseWriter, r *http.R
 		httpError(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	reqs, err := parseSystemTemplateImportPayload(body)
 	if err != nil {
@@ -489,7 +489,7 @@ func (h *TemplateHandler) ImportSystemTemplates(w http.ResponseWriter, r *http.R
 		imported = append(imported, *t)
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	writeJSON(w, http.StatusCreated, map[string]any{
 		"templates": imported,
 		"total":     len(imported),
 	})

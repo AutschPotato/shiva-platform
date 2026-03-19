@@ -92,7 +92,7 @@ func (w *Worker) GetStatus(ctx context.Context) (*model.K6Status, error) {
 	if err != nil {
 		return nil, fmt.Errorf("worker %s: %w", w.Address, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var envelope k6StatusEnvelope
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
@@ -125,7 +125,7 @@ func (w *Worker) PatchStatus(ctx context.Context, patch model.K6StatusPatch) (*m
 	if err != nil {
 		return nil, fmt.Errorf("worker %s patch: %w", w.Address, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
@@ -149,7 +149,7 @@ func (w *Worker) GetMetrics(ctx context.Context) (map[string]model.K6Metric, err
 	if err != nil {
 		return nil, fmt.Errorf("worker %s metrics: %w", w.Address, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)

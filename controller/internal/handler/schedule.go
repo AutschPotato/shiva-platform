@@ -12,8 +12,8 @@ import (
 
 	"github.com/shiva-load-testing/controller/internal/middleware"
 	"github.com/shiva-load-testing/controller/internal/model"
-	"github.com/shiva-load-testing/controller/internal/secrets"
 	"github.com/shiva-load-testing/controller/internal/scheduler"
+	"github.com/shiva-load-testing/controller/internal/secrets"
 	"github.com/shiva-load-testing/controller/internal/store"
 )
 
@@ -154,8 +154,8 @@ func parseRecurrenceEnd(value *string) (*time.Time, error) {
 	return &t, nil
 }
 
-func (h *ScheduleHandler) writeScheduleConflict(w http.ResponseWriter, conflict interface{}) {
-	writeJSON(w, http.StatusConflict, map[string]interface{}{
+func (h *ScheduleHandler) writeScheduleConflict(w http.ResponseWriter, conflict any) {
+	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":    "schedule conflicts with existing test",
 		"conflict": conflict,
 	})
@@ -315,7 +315,7 @@ func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
 	if schedules == nil {
 		schedules = []model.ScheduledTest{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"schedules": schedules})
+	writeJSON(w, http.StatusOK, map[string]any{"schedules": schedules})
 }
 
 // Get returns a single scheduled test.
@@ -495,15 +495,15 @@ func (h *ScheduleHandler) Calendar(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []model.CalendarEvent{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"events": events})
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
 // CheckConflict validates if a proposed time slot has conflicts.
 func (h *ScheduleHandler) CheckConflict(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Start      string `json:"start"`
-		DurationS  int    `json:"duration_s"`
-		ExcludeID  string `json:"exclude_id"`
+		Start     string `json:"start"`
+		DurationS int    `json:"duration_s"`
+		ExcludeID string `json:"exclude_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, "invalid request", http.StatusBadRequest)
@@ -527,7 +527,7 @@ func (h *ScheduleHandler) CheckConflict(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp := map[string]interface{}{"conflict": conflict != nil}
+	resp := map[string]any{"conflict": conflict != nil}
 	if conflict != nil {
 		resp["conflicting_schedule"] = conflict
 	}
@@ -545,7 +545,7 @@ func (h *ScheduleHandler) ListExecutions(w http.ResponseWriter, r *http.Request)
 	if execs == nil {
 		execs = []model.ScheduleExecution{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"executions": execs})
+	writeJSON(w, http.StatusOK, map[string]any{"executions": execs})
 }
 
 // canManage checks if the current user can manage (edit/delete/pause) the schedule.

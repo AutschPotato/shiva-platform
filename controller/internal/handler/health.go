@@ -17,10 +17,10 @@ func NewHealthHandler(orch *orchestrator.Orchestrator) *HealthHandler {
 
 func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	workers := h.orch.CheckWorkers(r.Context())
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"status":  "ok",
 		"workers": workers,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }

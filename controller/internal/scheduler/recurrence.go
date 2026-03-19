@@ -91,7 +91,7 @@ func ExpandOccurrences(baseTime time.Time, durationS int, recurrenceType, timezo
 		case "monthly":
 			current = localCurrent.AddDate(0, 1, 0).UTC()
 		default:
-			break
+			return slots
 		}
 	}
 

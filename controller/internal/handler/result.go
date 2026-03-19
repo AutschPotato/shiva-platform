@@ -20,20 +20,20 @@ type ResultHandler struct {
 }
 
 type resultListItem struct {
-	ID            string      `json:"id"`
-	ProjectName   string      `json:"project_name"`
-	URL           string      `json:"url"`
-	Status        string      `json:"status"`
-	UserID        int64       `json:"user_id"`
-	Username      string      `json:"username"`
-	CreatedAt     interface{} `json:"created_at"`
-	ErrorRate     *float64    `json:"error_rate,omitempty"`
-	TotalRequests *float64    `json:"total_requests,omitempty"`
-	AvgLatency    *float64    `json:"avg_latency_ms,omitempty"`
-	P95Latency    *float64    `json:"p95_latency_ms,omitempty"`
-	DurationS     *float64    `json:"duration_s,omitempty"`
-	TotalVUs      *int        `json:"total_vus,omitempty"`
-	RunBy         interface{} `json:"run_by"`
+	ID            string   `json:"id"`
+	ProjectName   string   `json:"project_name"`
+	URL           string   `json:"url"`
+	Status        string   `json:"status"`
+	UserID        int64    `json:"user_id"`
+	Username      string   `json:"username"`
+	CreatedAt     any      `json:"created_at"`
+	ErrorRate     *float64 `json:"error_rate,omitempty"`
+	TotalRequests *float64 `json:"total_requests,omitempty"`
+	AvgLatency    *float64 `json:"avg_latency_ms,omitempty"`
+	P95Latency    *float64 `json:"p95_latency_ms,omitempty"`
+	DurationS     *float64 `json:"duration_s,omitempty"`
+	TotalVUs      *int     `json:"total_vus,omitempty"`
+	RunBy         any      `json:"run_by"`
 }
 
 func NewResultHandler(s *store.Store, logger *slog.Logger) *ResultHandler {
@@ -90,7 +90,7 @@ func buildResultListItem(lt model.LoadTest) resultListItem {
 		UserID:      lt.UserID,
 		Username:    lt.Username,
 		CreatedAt:   lt.CreatedAt,
-		RunBy:       map[string]interface{}{"username": lt.Username, "id": lt.UserID},
+		RunBy:       map[string]any{"username": lt.Username, "id": lt.UserID},
 	}
 
 	if len(lt.ResultJSON) > 0 {
@@ -124,8 +124,8 @@ func buildResultListItem(lt model.LoadTest) resultListItem {
 	return item
 }
 
-func buildResultResponse(lt *model.LoadTest) map[string]interface{} {
-	resp := map[string]interface{}{
+func buildResultResponse(lt *model.LoadTest) map[string]any {
+	resp := map[string]any{
 		"id":           lt.ID,
 		"project_name": lt.ProjectName,
 		"url":          lt.URL,
@@ -133,7 +133,7 @@ func buildResultResponse(lt *model.LoadTest) map[string]interface{} {
 		"user_id":      lt.UserID,
 		"username":     lt.Username,
 		"created_at":   lt.CreatedAt,
-		"run_by":       map[string]interface{}{"username": lt.Username, "id": lt.UserID},
+		"run_by":       map[string]any{"username": lt.Username, "id": lt.UserID},
 	}
 
 	if len(lt.ResultJSON) > 0 {
@@ -206,7 +206,7 @@ func (h *ResultHandler) ListResults(w http.ResponseWriter, r *http.Request) {
 		items[i] = buildResultListItem(result)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"results": items,
 		"total":   total,
 	})

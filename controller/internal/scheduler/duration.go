@@ -67,7 +67,7 @@ func estimateFromBuilder(req *model.CreateScheduleRequest) int {
 
 // estimateFromConfig extracts the maximum scenario duration from a config JSON.
 func estimateFromConfig(configContent string) int {
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(configContent), &parsed); err != nil {
 		return 0
 	}
@@ -81,14 +81,14 @@ func estimateFromConfig(configContent string) int {
 		return 0
 	}
 
-	scenarioMap, ok := scenarios.(map[string]interface{})
+	scenarioMap, ok := scenarios.(map[string]any)
 	if !ok {
 		return 0
 	}
 
 	maxDuration := 0
 	for _, sc := range scenarioMap {
-		scMap, ok := sc.(map[string]interface{})
+		scMap, ok := sc.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -100,10 +100,10 @@ func estimateFromConfig(configContent string) int {
 		}
 
 		// Check stages (sum of stage durations)
-		if stages, ok := scMap["stages"].([]interface{}); ok {
+		if stages, ok := scMap["stages"].([]any); ok {
 			stageTotal := 0
 			for _, stageRaw := range stages {
-				stageMap, ok := stageRaw.(map[string]interface{})
+				stageMap, ok := stageRaw.(map[string]any)
 				if !ok {
 					continue
 				}

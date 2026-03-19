@@ -15,11 +15,11 @@ type Store struct {
 }
 
 type loadTestScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 type templateScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func New(db *sql.DB) *Store {
@@ -417,7 +417,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]model.AdminUserRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var users []model.AdminUserRow
 	for rows.Next() {
@@ -479,7 +479,7 @@ func (s *Store) CreatePasswordResetToken(ctx context.Context, token *model.Passw
 	if err != nil {
 		return fmt.Errorf("begin password reset token tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at IS NULL`,
@@ -510,7 +510,7 @@ func (s *Store) ResetPasswordWithToken(ctx context.Context, tokenHash, hashedPas
 	if err != nil {
 		return nil, fmt.Errorf("begin password reset tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var userID int64
 	var expiresAt time.Time
@@ -704,9 +704,9 @@ func scanLoadTestSummary(scanner loadTestScanner, lt *model.LoadTest) error {
 	return nil
 }
 
-func buildLoadTestListQueries(userID int64, role string, search string) (string, string, []interface{}) {
+func buildLoadTestListQueries(userID int64, role string, search string) (string, string, []any) {
 	var countQuery, listQuery string
-	var args []interface{}
+	var args []any
 
 	if role == "admin" {
 		countQuery = `SELECT COUNT(*) FROM load_tests`
@@ -815,7 +815,7 @@ func (s *Store) ListLoadTests(ctx context.Context, userID int64, role string, li
 	if err != nil {
 		return nil, 0, fmt.Errorf("list load tests: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tests []model.LoadTest
 	for rows.Next() {
@@ -891,7 +891,7 @@ func (s *Store) GetTemplate(ctx context.Context, id string) (*model.TestTemplate
 
 func (s *Store) ListTemplates(ctx context.Context, userID int64, role string) ([]model.TestTemplate, error) {
 	var query string
-	var args []interface{}
+	var args []any
 
 	if role == "admin" {
 		query = `SELECT id, name, description, mode, url, stages, script_content, config_content, http_method, content_type, payload_json, payload_target_kib,
@@ -910,7 +910,7 @@ func (s *Store) ListTemplates(ctx context.Context, userID int64, role string) ([
 	if err != nil {
 		return nil, fmt.Errorf("list templates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var templates []model.TestTemplate
 	for rows.Next() {
@@ -965,11 +965,11 @@ func (s *Store) MarkStaleRunningTests(ctx context.Context) (int64, error) {
 // --- Scheduled Tests ---
 
 type scheduledTestScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 type scheduleExecutionScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 const scheduledTestSelect = `SELECT id, name, project_name, url, mode, executor, stages,
@@ -1016,7 +1016,7 @@ func scanScheduledTest(scanner scheduledTestScanner, st *model.ScheduledTest) er
 	return nil
 }
 
-func (s *Store) getScheduledTestByQuery(ctx context.Context, query string, args ...interface{}) (*model.ScheduledTest, error) {
+func (s *Store) getScheduledTestByQuery(ctx context.Context, query string, args ...any) (*model.ScheduledTest, error) {
 	st := &model.ScheduledTest{}
 	err := scanScheduledTest(s.db.QueryRowContext(ctx, query, args...), st)
 	if err == sql.ErrNoRows {
@@ -1028,12 +1028,12 @@ func (s *Store) getScheduledTestByQuery(ctx context.Context, query string, args 
 	return st, nil
 }
 
-func (s *Store) listScheduledTestsByQuery(ctx context.Context, query string, args ...interface{}) ([]model.ScheduledTest, error) {
+func (s *Store) listScheduledTestsByQuery(ctx context.Context, query string, args ...any) ([]model.ScheduledTest, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []model.ScheduledTest
 	for rows.Next() {
@@ -1107,7 +1107,7 @@ func (s *Store) ListSystemTemplates(ctx context.Context) ([]model.TestTemplate, 
 	if err != nil {
 		return nil, fmt.Errorf("list system templates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var templates []model.TestTemplate
 	for rows.Next() {
@@ -1235,7 +1235,7 @@ func (s *Store) GetOverlappingSchedules(ctx context.Context, start, end time.Tim
 	if err != nil {
 		return nil, fmt.Errorf("get overlapping: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []model.ScheduledTest
 	for rows.Next() {
 		var st model.ScheduledTest
@@ -1259,7 +1259,7 @@ func (s *Store) GetRecurringSchedules(ctx context.Context) ([]model.ScheduledTes
 	if err != nil {
 		return nil, fmt.Errorf("get recurring: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []model.ScheduledTest
 	for rows.Next() {
 		var st model.ScheduledTest
@@ -1298,7 +1298,7 @@ func (s *Store) ListExecutions(ctx context.Context, scheduleID string) ([]model.
 	if err != nil {
 		return nil, fmt.Errorf("list executions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []model.ScheduleExecution
 	for rows.Next() {
 		var ex model.ScheduleExecution
@@ -1317,7 +1317,7 @@ func (s *Store) CountConsecutiveFailures(ctx context.Context, scheduleID string)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
 		var status string

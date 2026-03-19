@@ -44,33 +44,35 @@ type Orchestrator struct {
 	workers []*Worker
 	logger  *slog.Logger
 
-	mu             sync.RWMutex
-	latestMetrics  *model.AggregatedMetrics
-	timeSeries     []model.TimePoint
-	testStartTime  time.Time
-	activeTestID   string
-	cancelPoll     context.CancelFunc
-	pollInterval   time.Duration
-	phase          TestPhase
-	phaseMessage   string
-	rampingDone    bool           // set when RampingManager finishes all stages
-	controllable   bool           // true if executor supports Pause/Resume/Scale
-	hasManagedRamp bool           // true if RampingManager controls test lifecycle
-	seenRunning    bool           // true once we've seen workers actively executing
-	zeroMetricRun  int            // consecutive ticks with 0 VUs after seenRunning (native executors)
-	peakWorkerVUs    map[string]int // tracks peak VUs per worker address
-	maxTestDuration  time.Duration  // absolute safety timeout for any test
-	dashboard        DashboardRuntimeConfig
+	mu                  sync.RWMutex
+	latestMetrics       *model.AggregatedMetrics
+	timeSeries          []model.TimePoint
+	testStartTime       time.Time
+	activeTestID        string
+	cancelPoll          context.CancelFunc
+	pollInterval        time.Duration
+	expectedRunDuration time.Duration
+	phase               TestPhase
+	phaseMessage        string
+	rampingDone         bool           // set when RampingManager finishes all stages
+	controllable        bool           // true if executor supports Pause/Resume/Scale
+	hasManagedRamp      bool           // true if RampingManager controls test lifecycle
+	seenRunning         bool           // true once we've seen workers actively executing
+	zeroMetricRun       int            // consecutive ticks with 0 VUs after seenRunning (native executors)
+	peakWorkerVUs       map[string]int // tracks peak VUs per worker address
+	maxTestDuration     time.Duration  // absolute safety timeout for any test
+	dashboard           DashboardRuntimeConfig
 
 	Ramping *RampingManager
 }
 
 type pollStateSnapshot struct {
-	seenRunning   bool
-	controllable  bool
-	hasManagedRamp bool
-	zeroMetricRun int
-	rampingDone   bool
+	seenRunning         bool
+	controllable        bool
+	hasManagedRamp      bool
+	zeroMetricRun       int
+	rampingDone         bool
+	expectedRunDuration time.Duration
 }
 
 func New(addresses []string, pollInterval time.Duration, maxTestDuration time.Duration, logger *slog.Logger, dashboard DashboardRuntimeConfig) *Orchestrator {
@@ -252,13 +254,13 @@ func (o *Orchestrator) StopAll(ctx context.Context) error {
 // controllable indicates whether the executor supports Pause/Resume/Scale.
 // hasManagedRamp indicates whether the RampingManager controls test lifecycle
 // (end-detection waits for rampDone instead of checking worker status).
-func (o *Orchestrator) StartPolling(testID string, controllable bool, hasManagedRamp bool, onComplete CompletionFunc) {
+func (o *Orchestrator) StartPolling(testID string, controllable bool, hasManagedRamp bool, expectedRunDuration time.Duration, onComplete CompletionFunc) {
 	o.mu.Lock()
 	if o.cancelPoll != nil {
 		o.cancelPoll()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	o.resetPollingStateLocked(testID, cancel, controllable, hasManagedRamp)
+	o.resetPollingStateLocked(testID, cancel, controllable, hasManagedRamp, expectedRunDuration)
 	o.mu.Unlock()
 
 	go o.pollLoop(ctx, testID, onComplete)
@@ -271,7 +273,7 @@ func (o *Orchestrator) StopPolling() {
 	o.clearActiveRunLocked()
 }
 
-func (o *Orchestrator) resetPollingStateLocked(testID string, cancel context.CancelFunc, controllable bool, hasManagedRamp bool) {
+func (o *Orchestrator) resetPollingStateLocked(testID string, cancel context.CancelFunc, controllable bool, hasManagedRamp bool, expectedRunDuration time.Duration) {
 	o.cancelPoll = cancel
 	o.activeTestID = testID
 	o.timeSeries = nil
@@ -280,6 +282,7 @@ func (o *Orchestrator) resetPollingStateLocked(testID string, cancel context.Can
 	o.rampingDone = false
 	o.controllable = controllable
 	o.hasManagedRamp = hasManagedRamp
+	o.expectedRunDuration = expectedRunDuration
 	o.seenRunning = false
 	o.zeroMetricRun = 0
 	o.peakWorkerVUs = make(map[string]int)
@@ -288,16 +291,16 @@ func (o *Orchestrator) resetPollingStateLocked(testID string, cancel context.Can
 func (o *Orchestrator) appendTimeSeriesPointLocked(agg *model.AggregatedMetrics) {
 	elapsed := time.Since(o.testStartTime).Seconds()
 	o.timeSeries = append(o.timeSeries, model.TimePoint{
-		ElapsedSec:    elapsed,
-		TotalVUs:      agg.TotalVUs,
-		RPS:           agg.RPS,
-		AvgLatency:    agg.AvgLatency,
-		P95Latency:    agg.P95Latency,
-		TotalRequests: agg.TotalRequests,
+		ElapsedSec:       elapsed,
+		TotalVUs:         agg.TotalVUs,
+		RPS:              agg.RPS,
+		AvgLatency:       agg.AvgLatency,
+		P95Latency:       agg.P95Latency,
+		TotalRequests:    agg.TotalRequests,
 		BusinessRequests: agg.BusinessRequests,
-		ErrorRate:     agg.ErrorRate,
-		Status4xx:     agg.Status4xx,
-		Status5xx:     agg.Status5xx,
+		ErrorRate:        agg.ErrorRate,
+		Status4xx:        agg.Status4xx,
+		Status5xx:        agg.Status5xx,
 	})
 }
 
@@ -332,11 +335,12 @@ func (o *Orchestrator) updatePollingState(agg *model.AggregatedMetrics) pollStat
 	}
 
 	return pollStateSnapshot{
-		seenRunning:   o.seenRunning,
-		controllable:  o.controllable,
-		hasManagedRamp: o.hasManagedRamp,
-		zeroMetricRun: o.zeroMetricRun,
-		rampingDone:   o.rampingDone,
+		seenRunning:         o.seenRunning,
+		controllable:        o.controllable,
+		hasManagedRamp:      o.hasManagedRamp,
+		zeroMetricRun:       o.zeroMetricRun,
+		rampingDone:         o.rampingDone,
+		expectedRunDuration: o.expectedRunDuration,
 	}
 }
 
@@ -359,8 +363,15 @@ func (o *Orchestrator) shouldCompleteTest(ctx context.Context, tickCount int, st
 	// Native executors can stay artificially alive when the k6 web dashboard
 	// keeps the process open after load generation has finished. In that case
 	// VUs in the metrics snapshot may never drop to zero, but /v1/status already
-	// reports the workers as paused/finished. Allow the status path to end the
-	// run once the test has definitely started.
+	// reports the workers as paused/finished. Only trust that fallback once the
+	// configured runtime has largely elapsed; otherwise we can cut off perfectly
+	// valid arrival-rate runs long before their target duration ends.
+	if state.expectedRunDuration > 0 {
+		elapsed := time.Since(o.testStartTime)
+		if elapsed+o.pollInterval < state.expectedRunDuration {
+			return false
+		}
+	}
 	return tickCount >= minTicksBeforeEndCheck && o.allWorkersEnded(ctx)
 }
 
@@ -475,7 +486,10 @@ func (o *Orchestrator) allWorkersEnded(ctx context.Context) bool {
 		status, err := w.GetStatus(ctx)
 		if err != nil {
 			o.logger.Debug("allWorkersEnded: worker unreachable", "worker", w.Address, "error", err)
-			continue
+			// Treat transient status failures conservatively. Otherwise a single
+			// unreachable worker can push a native executor into Collecting long
+			// before k6 has actually exited and written handleSummary.
+			return false
 		}
 
 		o.logger.Debug("allWorkersEnded: worker status",
@@ -503,6 +517,14 @@ func (o *Orchestrator) allWorkersEnded(ctx context.Context) bool {
 		if status.IsRunning() {
 			return false
 		}
+
+		if status.IsFinished() {
+			continue
+		}
+
+		// Any other reachable-but-nonterminal state is not safe to interpret as
+		// completed for native executors.
+		return false
 	}
 	return true
 }
@@ -596,10 +618,6 @@ func workerDisplayStatus(status *model.K6Status, testActive bool) string {
 		return "online"
 	}
 	return "online"
-}
-
-func buildWorkerMetrics(address string, status *model.K6Status, err error, testActive bool) model.WorkerMetrics {
-	return buildWorkerMetricsFromWorker(NewWorker(address, false, "", 0), status, err, testActive)
 }
 
 func buildWorkerMetricsFromWorker(worker *Worker, status *model.K6Status, err error, testActive bool) model.WorkerMetrics {

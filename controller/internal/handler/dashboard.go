@@ -39,7 +39,7 @@ func (h *DashboardHandler) ListDashboards(w http.ResponseWriter, r *http.Request
 		statuses = append(statuses, buildWorkerDashboardStatus(worker, activeTestID, phase))
 	}
 
-	writeJSONResponse(w, http.StatusOK, map[string]interface{}{
+	writeJSONResponse(w, http.StatusOK, map[string]any{
 		"dashboards":  statuses,
 		"active_test": activeTestID,
 		"phase":       string(phase),
@@ -268,7 +268,7 @@ func writeDashboardUnavailableHTML(w http.ResponseWriter, statusCode int, messag
 </html>`, html.EscapeString(message))
 }
 
-func writeJSONResponse(w http.ResponseWriter, statusCode int, payload interface{}) {
+func writeJSONResponse(w http.ResponseWriter, statusCode int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(payload)

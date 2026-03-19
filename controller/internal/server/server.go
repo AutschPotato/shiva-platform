@@ -16,25 +16,25 @@ import (
 )
 
 type Deps struct {
-	Store        *store.Store
-	Orchestrator *orchestrator.Orchestrator
-	Scheduler    *scheduler.Scheduler
-	TestHandler  *handler.TestHandler
-	Logger       *slog.Logger
-	JWTSecret    string
-	APIKey       string
-	CORSOrigins  []string
-	ScriptsDir   string
-	OutputDir    string
-	PublicAppURL string
+	Store                 *store.Store
+	Orchestrator          *orchestrator.Orchestrator
+	Scheduler             *scheduler.Scheduler
+	TestHandler           *handler.TestHandler
+	Logger                *slog.Logger
+	JWTSecret             string
+	APIKey                string
+	CORSOrigins           []string
+	ScriptsDir            string
+	OutputDir             string
+	PublicAppURL          string
 	PasswordResetTokenTTL time.Duration
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUser     string
-	SMTPPassword string
-	SMTPFromEmail string
-	SMTPFromName string
-	EncryptionKey string
+	SMTPHost              string
+	SMTPPort              int
+	SMTPUser              string
+	SMTPPassword          string
+	SMTPFromEmail         string
+	SMTPFromName          string
+	EncryptionKey         string
 }
 
 func NewRouter(deps Deps) http.Handler {

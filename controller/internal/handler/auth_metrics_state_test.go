@@ -23,7 +23,7 @@ func TestApplyCompletionAuthSummaryMarksComplete(t *testing.T) {
 		ClientAuthMethod:   "basic",
 		RefreshSkewSeconds: 30,
 		Metrics: model.AuthRuntimeMetrics{
-			TokenRequestsTotal: 0,
+			TokenRequestsTotal:  0,
 			TokenReuseHitsTotal: 25,
 			ResponseStatusCodes: []model.StatusCodeCount{
 				{Code: 200, Count: 1},

@@ -38,7 +38,7 @@ type Config struct {
 	InitialAdminPassword string
 
 	// Workers holds the resolved list of worker addresses (host:port).
-	Workers       []string
+	Workers         []string
 	WorkerDiscovery DiscoveryMode
 
 	CORSOrigins []string
@@ -50,15 +50,15 @@ type Config struct {
 	K6DashboardHost       string
 	K6DashboardPort       int
 
-	PublicAppURL              string
-	PasswordResetTokenTTLMin  int
-	SMTPHost                  string
-	SMTPPort                  int
-	SMTPUser                  string
-	SMTPPassword              string
-	SMTPFromEmail             string
-	SMTPFromName              string
-	EncryptionKey             string
+	PublicAppURL             string
+	PasswordResetTokenTTLMin int
+	SMTPHost                 string
+	SMTPPort                 int
+	SMTPUser                 string
+	SMTPPassword             string
+	SMTPFromEmail            string
+	SMTPFromName             string
+	EncryptionKey            string
 
 	ScriptsDir string
 	OutputDir  string
@@ -83,21 +83,21 @@ func Load() (*Config, error) {
 
 		CORSOrigins: strings.Split(envStr("CORS_ORIGINS", "http://localhost:3000"), ","),
 
-		MetricsPollIntervalMS: envInt("METRICS_POLL_INTERVAL_MS", 2000),
-		MaxTestDurationMin:    envInt("MAX_TEST_DURATION_MIN", 120),
-		K6CompletionBufferSec: envInt("K6_COMPLETION_BUFFER_SEC", 30),
-		K6DashboardEnabled:    envBool("K6_DASHBOARD_ENABLED", false),
-		K6DashboardHost:       envStr("K6_DASHBOARD_HOST", "0.0.0.0"),
-		K6DashboardPort:       envInt("K6_DASHBOARD_PORT", 5665),
-		PublicAppURL:          envStr("PUBLIC_APP_URL", "http://localhost:3000"),
+		MetricsPollIntervalMS:    envInt("METRICS_POLL_INTERVAL_MS", 2000),
+		MaxTestDurationMin:       envInt("MAX_TEST_DURATION_MIN", 120),
+		K6CompletionBufferSec:    envInt("K6_COMPLETION_BUFFER_SEC", 30),
+		K6DashboardEnabled:       envBool("K6_DASHBOARD_ENABLED", false),
+		K6DashboardHost:          envStr("K6_DASHBOARD_HOST", "0.0.0.0"),
+		K6DashboardPort:          envInt("K6_DASHBOARD_PORT", 5665),
+		PublicAppURL:             envStr("PUBLIC_APP_URL", "http://localhost:3000"),
 		PasswordResetTokenTTLMin: envInt("PASSWORD_RESET_TOKEN_TTL_MIN", 30),
-		SMTPHost:              envStr("SMTP_HOST", ""),
-		SMTPPort:              envInt("SMTP_PORT", 587),
-		SMTPUser:              envStr("SMTP_USER", ""),
-		SMTPPassword:          envStr("SMTP_PASSWORD", ""),
-		SMTPFromEmail:         envStr("SMTP_FROM_EMAIL", "noreply@example.com"),
-		SMTPFromName:          envStr("SMTP_FROM_NAME", "Shiva"),
-		EncryptionKey:         envStr("APP_ENCRYPTION_KEY", envStr("JWT_SECRET", "change-me-in-production")),
+		SMTPHost:                 envStr("SMTP_HOST", ""),
+		SMTPPort:                 envInt("SMTP_PORT", 587),
+		SMTPUser:                 envStr("SMTP_USER", ""),
+		SMTPPassword:             envStr("SMTP_PASSWORD", ""),
+		SMTPFromEmail:            envStr("SMTP_FROM_EMAIL", "noreply@example.com"),
+		SMTPFromName:             envStr("SMTP_FROM_NAME", "Shiva"),
+		EncryptionKey:            envStr("APP_ENCRYPTION_KEY", envStr("JWT_SECRET", "change-me-in-production")),
 
 		ScriptsDir: envStr("SCRIPTS_DIR", "/scripts"),
 		OutputDir:  envStr("OUTPUT_DIR", "/output"),

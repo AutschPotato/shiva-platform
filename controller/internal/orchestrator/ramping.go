@@ -2,8 +2,8 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -283,8 +283,10 @@ func parseStageDuration(d string) time.Duration {
 		return 0
 	}
 	unit := d[len(d)-1]
-	val := 0
-	fmt.Sscanf(d[:len(d)-1], "%d", &val)
+	val, err := strconv.Atoi(d[:len(d)-1])
+	if err != nil {
+		return 0
+	}
 	switch unit {
 	case 's':
 		return time.Duration(val) * time.Second
