@@ -123,11 +123,29 @@ func TestGenerateFromBuilderIncludesAuthFlow(t *testing.T) {
 	if !strings.Contains(result.Script, `const AUTH_RETRYABLE_STATUS_CODES = envString('`+AuthRetryableStatusCodesEnvVar+`', '408,429,502,503,504');`) {
 		t.Fatalf("expected auth retryable status codes to come from env contract")
 	}
+	if !strings.Contains(result.Script, `const authTokenResponses = new Counter('auth_token_responses_total');`) {
+		t.Fatalf("expected auth response counter in generated script")
+	}
+	if !strings.Contains(result.Script, `const authAbortEvents = new Counter('auth_abort_events_total');`) {
+		t.Fatalf("expected auth abort counter in generated script")
+	}
 	if !strings.Contains(result.Script, `function retryDelaySeconds(res)`) {
 		t.Fatalf("expected retryDelaySeconds helper in generated script")
 	}
+	if !strings.Contains(result.Script, `authTokenResponses.add(1, { status_code: String(res.status) });`) {
+		t.Fatalf("expected auth response status tagging in generated script")
+	}
+	if !strings.Contains(result.Script, `authAbortEvents.add(1, tags);`) {
+		t.Fatalf("expected auth abort tagging in generated script")
+	}
 	if !strings.Contains(result.Script, `exec.test.abort('Authentication aborted test run: ' + String(reason || 'token request failed'));`) {
 		t.Fatalf("expected auth failures to abort the test run")
+	}
+	if !strings.Contains(InjectSummaryExport(result.Script), `const authAbortSummaryFromMetrics = () => {`) {
+		t.Fatalf("expected auth abort summary derivation in handleSummary")
+	}
+	if !strings.Contains(InjectSummaryExport(result.Script), `part.indexOf('=')`) {
+		t.Fatalf("expected tagged summary parsing to support equals separators")
 	}
 	if !strings.Contains(InjectSummaryExport(result.Script), `/output/auth-summary-`) {
 		t.Fatalf("expected auth summary artifact in handleSummary")

@@ -228,6 +228,14 @@ func (s *K6Status) IsFinished() bool {
 	return false
 }
 
+// IsReadyForStart returns true when a freshly loaded k6 worker can be started.
+// We require paused=true, stopped=false, and a non-terminal status so the
+// controller does not mistake an old finished/stopped worker from the previous
+// run for a freshly restarted one.
+func (s *K6Status) IsReadyForStart() bool {
+	return s.Paused && !s.Stopped && !s.IsFinished()
+}
+
 type K6StatusPatch struct {
 	Paused  *bool `json:"paused,omitempty"`
 	Stopped *bool `json:"stopped,omitempty"`

@@ -379,6 +379,29 @@ function markAuthAbort(cause, reason, statusCode, retryable) {
 
 function abortAuthRun(cause, reason, statusCode, retryable) {
   markAuthAbort(cause, reason, statusCode, retryable);
+  const tags = {
+    cause: String(cause || ''),
+    retryable: retryable ? 'true' : 'false',
+  };
+  const numericStatusCode = Number(statusCode || 0);
+  if (Number.isInteger(numericStatusCode) && numericStatusCode > 0) {
+    tags.status_code = String(numericStatusCode);
+  }
+  authAbortEvents.add(1, tags);
+  authAbortTriggered.add(1);
+  const causeKey = Object.prototype.hasOwnProperty.call(authAbortCauseCounters, String(cause || ''))
+    ? String(cause || '')
+    : 'unknown';
+  authAbortCauseCounters[causeKey].add(1);
+  const abortStatusCounter = authAbortStatusCounters[numericStatusCode];
+  if (abortStatusCounter) {
+    abortStatusCounter.add(1);
+  }
+  if (retryable) {
+    authAbortRetryableTrue.add(1);
+  } else {
+    authAbortRetryableFalse.add(1);
+  }
   exec.test.abort('Authentication aborted test run: ' + String(reason || 'token request failed'));
 }
 
@@ -444,6 +467,11 @@ function requestAccessToken(isRefresh) {
     authTokenRequestDuration.add(Date.now() - startedAt);
     if (res && !res.error) {
       recordAuthResponseStatus(res.status);
+      authTokenResponses.add(1, { status_code: String(res.status) });
+      const responseStatusCounter = authResponseStatusCounters[Number(res.status || 0)];
+      if (responseStatusCounter) {
+        responseStatusCounter.add(1);
+      }
     }
 
     if (res && !res.error && res.status >= 200 && res.status < 300) {
@@ -535,6 +563,25 @@ const status5xx = new Counter('status_5xx');
 const authTokenRequests = new Counter('auth_token_requests_total');
 const authTokenSuccess = new Counter('auth_token_success_total');
 const authTokenFailure = new Counter('auth_token_failure_total');
+const authTokenResponses = new Counter('auth_token_responses_total');
+const authAbortEvents = new Counter('auth_abort_events_total');
+const authAbortTriggered = new Counter('auth_abort_triggered_total');
+const authAbortRetryableTrue = new Counter('auth_abort_retryable_true_total');
+const authAbortRetryableFalse = new Counter('auth_abort_retryable_false_total');
+const authAbortCauseCounters = {
+  http_status: new Counter('auth_abort_cause_http_status_total'),
+  timeout: new Counter('auth_abort_cause_timeout_total'),
+  network_error: new Counter('auth_abort_cause_network_error_total'),
+  config_error: new Counter('auth_abort_cause_config_error_total'),
+  invalid_response: new Counter('auth_abort_cause_invalid_response_total'),
+  unknown: new Counter('auth_abort_cause_unknown_total'),
+};
+const authResponseStatusCounters = {};
+const authAbortStatusCounters = {};
+for (let code = 100; code <= 599; code += 1) {
+  authResponseStatusCounters[code] = new Counter('auth_token_response_status_' + String(code) + '_total');
+  authAbortStatusCounters[code] = new Counter('auth_abort_status_' + String(code) + '_total');
+}
 const authTokenRefresh = new Counter('auth_token_refresh_total');
 const authTokenReuseHits = new Counter('auth_token_reuse_hits_total');
 const authTokenRequestDuration = new Trend('auth_token_request_duration_ms', true);
@@ -1425,27 +1472,241 @@ export function handleSummary(data) {
     artifacts['/output/payload-' + wid + '.json'] = payloadArtifact;
   }
   if (typeof AUTH_ENABLED !== 'undefined' && AUTH_ENABLED) {
+    const allMetrics = data && data.metrics ? data.metrics : {};
     const metricValues = (name) =>
-      data &&
-      data.metrics &&
-      data.metrics[name] &&
-      data.metrics[name].values
-        ? data.metrics[name].values
+      allMetrics[name] &&
+      allMetrics[name].values
+        ? allMetrics[name].values
         : {};
+    const taggedMetricKeys = (name) =>
+      Object.keys(allMetrics).filter((key) => key === name || key.indexOf(name + '{') === 0);
+    const metricKeyTags = (metricKey) => {
+      const start = metricKey.indexOf('{');
+      const end = metricKey.lastIndexOf('}');
+      if (start === -1 || end <= start + 1) {
+        return {};
+      }
+      const tags = {};
+      for (const part of metricKey.slice(start + 1, end).split(',')) {
+        let separator = part.indexOf(':');
+        if (separator <= 0) {
+          separator = part.indexOf('=');
+        }
+        if (separator <= 0) {
+          continue;
+        }
+        const key = part.slice(0, separator).trim();
+        let value = part.slice(separator + 1).trim();
+        if (
+          (value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))
+        ) {
+          value = value.slice(1, -1);
+        }
+        if (key) {
+          tags[key] = value;
+        }
+      }
+      return tags;
+    };
+    const taggedMetricCount = (metricKey) =>
+      Number(allMetrics[metricKey] && allMetrics[metricKey].values ? allMetrics[metricKey].values.count || 0 : 0);
+    const authRuntimeState = () =>
+      typeof AUTH_STATE !== 'undefined' && AUTH_STATE
+        ? AUTH_STATE
+        : null;
+    const counterMetricCount = (name) => Number(metricValues(name).count || 0);
+    const authStatusCodeEntriesFromCounterPrefix = (prefix) => {
+      const entries = [];
+      for (let code = 100; code <= 599; code += 1) {
+        const count = counterMetricCount(prefix + String(code) + '_total');
+        if (count > 0) {
+          entries.push({ code, count });
+        }
+      }
+      return entries;
+    };
+    const authResponseStatusEntriesFromSummary = () => {
+      const counts = {};
+      for (const metricKey of taggedMetricKeys('auth_token_responses_total')) {
+        const tags = metricKeyTags(metricKey);
+        const statusCode = Number(tags.status_code || 0);
+        const count = taggedMetricCount(metricKey);
+        if (!Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599 || count <= 0) {
+          continue;
+        }
+        const key = String(statusCode);
+        counts[key] = Number(counts[key] || 0) + count;
+      }
+      return Object.keys(counts)
+        .map((key) => Number(key))
+        .sort((a, b) => a - b)
+        .map((code) => ({ code, count: counts[String(code)] }));
+    };
+    const authResponseStatusEntriesFromCounters = () => authStatusCodeEntriesFromCounterPrefix('auth_token_response_status_');
+    const authResponseStatusEntriesFromRuntime = () => {
+      const state = authRuntimeState();
+      return authResponseStatusEntries(state);
+    };
+    const authAbortCauseFromCounters = () => {
+      const causeKeys = ['http_status', 'timeout', 'network_error', 'config_error', 'invalid_response', 'unknown'];
+      let selected = '';
+      let selectedCount = 0;
+      for (const causeKey of causeKeys) {
+        const count = counterMetricCount('auth_abort_cause_' + causeKey + '_total');
+        if (count > selectedCount) {
+          selected = causeKey;
+          selectedCount = count;
+        }
+      }
+      return selected;
+    };
+    const authAbortSummaryFromMetrics = () => {
+      let selected = null;
+      for (const metricKey of taggedMetricKeys('auth_abort_events_total')) {
+        const count = taggedMetricCount(metricKey);
+        if (count <= 0) {
+          continue;
+        }
+        const tags = metricKeyTags(metricKey);
+        const statusCode = Number(tags.status_code || 0);
+        const candidate = {
+          count,
+          cause: tags.cause || '',
+          retryable: String(tags.retryable || '').toLowerCase() === 'true',
+          statusCode: Number.isInteger(statusCode) && statusCode > 0 ? statusCode : 0,
+        };
+        if (!selected || candidate.count > selected.count) {
+          selected = candidate;
+        }
+      }
+      if (!selected) {
+        return {
+          triggered: false,
+          cause: '',
+          reason: '',
+          statusCode: 0,
+          retryable: false,
+        };
+      }
+      let reason = 'Authentication aborted the test run.';
+      if (selected.cause === 'http_status' && selected.statusCode > 0) {
+        reason = 'token endpoint returned HTTP ' + String(selected.statusCode);
+      } else if (selected.cause === 'timeout') {
+        reason = 'token request timed out';
+      } else if (selected.cause === 'network_error') {
+        reason = 'token request failed';
+      } else if (selected.cause === 'config_error') {
+        reason = 'authentication configuration is incomplete';
+      } else if (selected.cause === 'invalid_response') {
+        reason = 'token endpoint returned invalid JSON';
+      }
+      return {
+        triggered: true,
+        cause: selected.cause,
+        reason,
+        statusCode: selected.statusCode,
+        retryable: selected.retryable,
+      };
+    };
+    const authAbortSummaryFromCounters = () => {
+      const triggered = counterMetricCount('auth_abort_triggered_total') > 0 || counterMetricCount('auth_abort_events_total') > 0;
+      if (!triggered) {
+        return {
+          triggered: false,
+          cause: '',
+          reason: '',
+          statusCode: 0,
+          retryable: false,
+        };
+      }
+      const statusEntries = authStatusCodeEntriesFromCounterPrefix('auth_abort_status_');
+      const statusCode = statusEntries.length > 0 ? statusEntries[0].code : 0;
+      const cause = authAbortCauseFromCounters();
+      const retryable = counterMetricCount('auth_abort_retryable_true_total') > 0
+        ? true
+        : counterMetricCount('auth_abort_retryable_false_total') > 0
+          ? false
+          : false;
+      let reason = 'Authentication aborted the test run.';
+      if (cause === 'http_status' && statusCode > 0) {
+        reason = 'token endpoint returned HTTP ' + String(statusCode);
+      } else if (cause === 'timeout') {
+        reason = 'token request timed out';
+      } else if (cause === 'network_error') {
+        reason = 'token request failed';
+      } else if (cause === 'config_error') {
+        reason = 'authentication configuration is incomplete';
+      } else if (cause === 'invalid_response') {
+        reason = 'token endpoint returned invalid JSON';
+      }
+      return {
+        triggered: true,
+        cause,
+        reason,
+        statusCode,
+        retryable,
+      };
+    };
+    const authAbortSummaryFromRuntime = () => {
+      const state = authRuntimeState();
+      if (!state || !state.abortTriggered) {
+        return {
+          triggered: false,
+          cause: '',
+          reason: '',
+          statusCode: 0,
+          retryable: false,
+        };
+      }
+      return {
+        triggered: true,
+        cause: String(state.abortCause || ''),
+        reason: String(state.abortReason || 'Authentication aborted the test run.'),
+        statusCode: Number.isInteger(Number(state.abortHTTPStatusCode)) ? Number(state.abortHTTPStatusCode) : 0,
+        retryable: Boolean(state.abortRetryable),
+      };
+    };
     const tokenDurationMetric =
       metricValues('auth_token_request_duration_ms');
-    const authState = typeof AUTH_STATE !== 'undefined' ? AUTH_STATE : null;
     const tokenRequestsTotal = Number(metricValues('auth_token_requests_total').count || 0);
     const tokenSuccessTotal = Number(metricValues('auth_token_success_total').count || 0);
     const tokenFailureTotal = Number(metricValues('auth_token_failure_total').count || 0);
     const tokenSuccessRate = tokenRequestsTotal > 0 ? tokenSuccessTotal / tokenRequestsTotal : 0;
     const tokenRefreshTotal = Number(metricValues('auth_token_refresh_total').count || 0);
     const tokenReuseHitsTotal = Number(metricValues('auth_token_reuse_hits_total').count || 0);
+    const responseStatusCodesFromCounters = authResponseStatusEntriesFromCounters();
+    const responseStatusCodesFromSummary = authResponseStatusEntriesFromSummary();
+    const responseStatusCodesFromRuntime = authResponseStatusEntriesFromRuntime();
+    const responseStatusCodes = responseStatusCodesFromCounters.length > 0
+      ? responseStatusCodesFromCounters
+      : responseStatusCodesFromSummary.length > 0
+        ? responseStatusCodesFromSummary
+        : responseStatusCodesFromRuntime;
+    const abortSummaryFromCounters = authAbortSummaryFromCounters();
+    const abortSummaryFromMetrics = authAbortSummaryFromMetrics();
+    const abortSummaryFromRuntime = authAbortSummaryFromRuntime();
+    const abortSummary = abortSummaryFromCounters.triggered
+      ? abortSummaryFromCounters
+      : abortSummaryFromMetrics.triggered
+        ? {
+            triggered: true,
+            cause: abortSummaryFromMetrics.cause || abortSummaryFromRuntime.cause,
+            reason:
+              abortSummaryFromMetrics.cause || abortSummaryFromMetrics.statusCode > 0
+                ? abortSummaryFromMetrics.reason
+                : (abortSummaryFromRuntime.reason || abortSummaryFromMetrics.reason),
+            statusCode: abortSummaryFromMetrics.statusCode > 0
+              ? abortSummaryFromMetrics.statusCode
+              : abortSummaryFromRuntime.statusCode,
+            retryable: abortSummaryFromMetrics.retryable || abortSummaryFromRuntime.retryable,
+          }
+        : abortSummaryFromRuntime;
 
     artifacts['/output/auth-summary-' + wid + '.json'] = JSON.stringify({
-      status: authState && authState.abortTriggered ? 'aborted' : 'complete',
-      message: authState && authState.abortTriggered
-        ? String(authState.abortReason || authState.lastAuthError || 'Authentication aborted the test run.')
+      status: abortSummary.triggered ? 'aborted' : 'complete',
+      message: abortSummary.triggered
+        ? abortSummary.reason
         : (tokenRequestsTotal === 0 ? 'Authentication was enabled but no token request was required during this run.' : ''),
       mode: typeof AUTH_MODE !== 'undefined' ? AUTH_MODE : '',
       token_url: typeof AUTH_TOKEN_URL !== 'undefined' ? AUTH_TOKEN_URL : '',
@@ -1462,14 +1723,14 @@ export function handleSummary(data) {
         token_request_max_ms: Number(tokenDurationMetric.max || 0),
         token_refresh_total: tokenRefreshTotal,
         token_reuse_hits_total: tokenReuseHitsTotal,
-        response_status_codes: authResponseStatusEntries(authState),
-        abort_triggered: Boolean(authState && authState.abortTriggered),
-        abort_cause: authState && authState.abortCause ? String(authState.abortCause) : '',
-        abort_reason: authState && authState.abortReason ? String(authState.abortReason) : '',
-        abort_http_status_codes: authState && Number(authState.abortHTTPStatusCode || 0) > 0
-          ? [Number(authState.abortHTTPStatusCode)]
+        response_status_codes: responseStatusCodes,
+        abort_triggered: abortSummary.triggered,
+        abort_cause: abortSummary.cause,
+        abort_reason: abortSummary.reason,
+        abort_http_status_codes: abortSummary.statusCode > 0
+          ? [abortSummary.statusCode]
           : [],
-        abort_retryable: Boolean(authState && authState.abortRetryable),
+        abort_retryable: abortSummary.retryable,
       },
     });
   }

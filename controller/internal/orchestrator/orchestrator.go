@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,10 +110,17 @@ func (o *Orchestrator) GetPhase() (TestPhase, string) {
 	return o.phase, o.phaseMessage
 }
 
-// ResumeAll sends an unpause command to all workers in parallel.
-// Each worker is retried up to 5 times with 2s backoff to handle the case where
-// the externally-controlled executor hasn't fully initialized yet.
-func (o *Orchestrator) ResumeAll(ctx context.Context) error {
+func isBenignStartupResumeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "doesn't support pause and resume operations after its start") ||
+		strings.Contains(msg, "cannot pause the externally controlled executor before it has started") ||
+		strings.Contains(msg, "test execution wasn't paused")
+}
+
+func (o *Orchestrator) resumeAll(ctx context.Context, tolerateAlreadyStarted bool) error {
 	g, ctx := errgroup.WithContext(ctx)
 	paused := false
 	patch := model.K6StatusPatch{Paused: &paused}
@@ -131,6 +139,10 @@ func (o *Orchestrator) ResumeAll(ctx context.Context) error {
 					o.logger.Info("worker resumed", "worker", w.Address)
 					return nil
 				}
+				if tolerateAlreadyStarted && isBenignStartupResumeError(err) {
+					o.logger.Info("worker already active before resume completed", "worker", w.Address)
+					return nil
+				}
 				lastErr = err
 			}
 			o.logger.Error("failed to resume worker after retries", "worker", w.Address, "error", lastErr)
@@ -138,6 +150,22 @@ func (o *Orchestrator) ResumeAll(ctx context.Context) error {
 		})
 	}
 	return g.Wait()
+}
+
+// ResumeAll sends an unpause command to all workers in parallel.
+// Each worker is retried up to 5 times with 2s backoff to handle the case where
+// the externally-controlled executor hasn't fully initialized yet.
+func (o *Orchestrator) ResumeAll(ctx context.Context) error {
+	return o.resumeAll(ctx, false)
+}
+
+// ResumeAllForStart starts prepared workers. During fresh startup a worker can
+// race from paused into an already-active state before the controller's resume
+// patch arrives. Those "already started / not paused" responses are benign and
+// should not fail the overall launch.
+func (o *Orchestrator) ResumeAllForStart(ctx context.Context, controllable bool) error {
+	_ = controllable
+	return o.resumeAll(ctx, true)
 }
 
 // PauseAll sends a pause command to all workers in parallel.
@@ -638,31 +666,38 @@ func buildWorkerMetricsFromWorker(worker *Worker, status *model.K6Status, err er
 	return wm
 }
 
-// WaitForAllReady blocks until every worker is reachable AND reports paused=true.
-// k6 starts with --paused, but the externally-controlled executor needs a moment
-// to initialize before it accepts pause/resume commands. Checking for paused=true
-// ensures the executor is fully ready.
+// WaitForAllReady blocks until every worker is reachable and startable.
+// k6 starts with --paused, but after StopAll or natural completion the old worker
+// can briefly remain reachable with paused=true in a terminal state while Docker
+// restarts it. Requiring a fresh startable state prevents resuming the previous run.
 func (o *Orchestrator) WaitForAllReady(ctx context.Context) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	consecutiveReady := 0
+	const stableReadyChecks = 2
 
 	for {
 		allReady := true
 		for _, w := range o.workers {
-			if !w.IsPaused(ctx) {
+			if !w.IsReadyForStart(ctx) {
 				allReady = false
-				o.logger.Debug("worker not yet paused", "worker", w.Address)
+				o.logger.Debug("worker not yet ready for start", "worker", w.Address)
 				break
 			}
 		}
 		if allReady {
-			o.logger.Info("all workers ready and paused")
-			return nil
+			consecutiveReady++
+			if consecutiveReady >= stableReadyChecks {
+				o.logger.Info("all workers ready for start")
+				return nil
+			}
+		} else {
+			consecutiveReady = 0
 		}
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for workers to become ready (paused)")
+			return fmt.Errorf("timed out waiting for workers to become ready for start")
 		case <-ticker.C:
 		}
 	}

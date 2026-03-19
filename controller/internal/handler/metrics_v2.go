@@ -192,10 +192,11 @@ func buildMetricsV2(legacy *model.AggregatedMetrics, rawSummary string, metadata
 	}
 
 	if result.HTTPBusiness.Requests == 0 && legacy != nil {
-		if result.HTTPAuxiliary.Requests > 0 && legacy.TotalRequests > 0 {
-			requests := max0(legacy.TotalRequests - result.HTTPAuxiliary.Requests)
-			successes := max0(legacy.HTTPSuccesses - result.HTTPAuxiliary.Successes)
-			failures := max0(legacy.HTTPFailures - result.HTTPAuxiliary.Failures)
+		sourceTotal := result.HTTPTotal
+		if result.HTTPAuxiliary.Requests > 0 && sourceTotal.Requests > 0 {
+			requests := max0(sourceTotal.Requests - result.HTTPAuxiliary.Requests)
+			successes := max0(sourceTotal.Successes - result.HTTPAuxiliary.Successes)
+			failures := max0(sourceTotal.Failures - result.HTTPAuxiliary.Failures)
 			successRate, errorRate := safeRate(successes, requests)
 			result.HTTPBusiness = model.HTTPMetricsBlock{
 				Requests:      requests,
@@ -204,11 +205,11 @@ func buildMetricsV2(legacy *model.AggregatedMetrics, rawSummary string, metadata
 				Failures:      failures,
 				SuccessRate:   successRate,
 				ErrorRate:     errorRate,
-				Status4xx:     legacy.Status4xx,
-				Status5xx:     legacy.Status5xx,
-				OtherFailures: max0(failures - legacy.Status4xx - legacy.Status5xx),
+				Status4xx:     max0(sourceTotal.Status4xx - result.HTTPAuxiliary.Status4xx),
+				Status5xx:     max0(sourceTotal.Status5xx - result.HTTPAuxiliary.Status5xx),
+				OtherFailures: max0(failures - max0(sourceTotal.Status4xx-result.HTTPAuxiliary.Status4xx) - max0(sourceTotal.Status5xx-result.HTTPAuxiliary.Status5xx)),
 			}
-			quality = upsertMetricQuality(quality, metricQuality("http_business", "approximate", "legacy_total_minus_auth", "global", "Business traffic was approximated by subtracting auth token requests from total HTTP requests."))
+			quality = upsertMetricQuality(quality, metricQuality("http_business", "approximate", "total_minus_auth", "global", "Business traffic was approximated by subtracting auth token requests from total HTTP requests."))
 		} else {
 			result.HTTPBusiness = result.HTTPTotal
 			quality = upsertMetricQuality(quality, metricQuality("http_business", "legacy", "legacy_total_http", "global", "Run has no business-specific counters; total HTTP traffic is used as a legacy fallback."))

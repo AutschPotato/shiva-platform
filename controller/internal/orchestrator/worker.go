@@ -204,14 +204,16 @@ func (w *Worker) IsReachable(ctx context.Context) bool {
 	return err == nil
 }
 
-// IsPaused checks if the worker is reachable AND in paused state,
-// meaning the externally-controlled executor has fully initialized.
-func (w *Worker) IsPaused(ctx context.Context) bool {
+// IsReadyForStart checks if the worker is reachable and in a startable state.
+// A fresh k6 process reports paused=true in a non-terminal state. Requiring a
+// non-stopped, non-finished status avoids reusing a worker that still exposes
+// the terminal state of the previous run.
+func (w *Worker) IsReadyForStart(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	status, err := w.GetStatus(ctx)
 	if err != nil {
 		return false
 	}
-	return status.Paused
+	return status.IsReadyForStart()
 }

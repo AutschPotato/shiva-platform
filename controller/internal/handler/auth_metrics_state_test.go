@@ -151,3 +151,78 @@ func TestHydrateAuthMetadataFromRawSummaryBackfillsResponseCodes(t *testing.T) {
 		t.Fatalf("expected token url to be hydrated, got %q", metadata.Auth.TokenURL)
 	}
 }
+
+func TestApplyCompletionAuthSummaryIgnoresUnconfiguredAuth(t *testing.T) {
+	metadata := &model.TestMetadata{}
+
+	authSummary := &scriptgen.AuthSummaryData{
+		Status:             "complete",
+		Mode:               "oauth_client_credentials",
+		TokenURL:           "https://auth.example.com/oauth/token",
+		ClientAuthMethod:   "basic",
+		RefreshSkewSeconds: 30,
+		Metrics: model.AuthRuntimeMetrics{
+			TokenRequestsTotal: 1,
+		},
+	}
+
+	var h TestHandler
+	h.applyCompletionAuthSummary(metadata, authSummary)
+
+	if metadata.Auth != nil {
+		t.Fatalf("expected auth metadata to remain nil for runs without configured auth")
+	}
+}
+
+func TestHydrateAuthMetadataFromRawSummaryIgnoresUnconfiguredAuth(t *testing.T) {
+	rawSummary := `--- worker-1 ---
+{
+  "mode": "oauth_client_credentials",
+  "token_url": "https://auth.example.com/oauth/token",
+  "client_auth_method": "basic",
+  "refresh_skew_seconds": 30,
+  "metrics": {
+    "token_requests_total": 1
+  }
+}`
+
+	metadata := hydrateAuthMetadataFromRawSummary(&model.TestMetadata{}, rawSummary)
+	if metadata == nil {
+		t.Fatalf("expected metadata to remain non-nil")
+	}
+	if metadata.Auth != nil {
+		t.Fatalf("expected auth metadata to remain nil for runs without configured auth")
+	}
+}
+
+func TestMergePendingMetaPreservesAuthMetadata(t *testing.T) {
+	h := &TestHandler{
+		pendingMeta: map[string]*pendingTestInfo{
+			"test-1": {
+				Meta: &model.TestMetadata{
+					ScriptURL: "http://target-lb:8090",
+					Auth: &model.AuthMetadata{
+						Mode:               "oauth_client_credentials",
+						TokenURL:           "http://target-lb:8090/api/auth/token/401",
+						ClientAuthMethod:   "basic",
+						RefreshSkewSeconds: 30,
+						SecretSource:       "runtime_only",
+					},
+				},
+			},
+		},
+	}
+
+	metadata := &model.TestMetadata{}
+	h.mergePendingMeta("test-1", metadata)
+
+	if metadata.Auth == nil {
+		t.Fatalf("expected auth metadata to be preserved")
+	}
+	if metadata.Auth.TokenURL != "http://target-lb:8090/api/auth/token/401" {
+		t.Fatalf("expected token URL to be preserved, got %q", metadata.Auth.TokenURL)
+	}
+	if metadata.Auth.SecretSource != "runtime_only" {
+		t.Fatalf("expected secret source to be preserved, got %q", metadata.Auth.SecretSource)
+	}
+}

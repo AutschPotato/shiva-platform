@@ -390,6 +390,7 @@ func (h *TestHandler) mergePendingMeta(testID string, metadata *model.TestMetada
 	metadata.Stages = pendingMeta.Stages
 	metadata.ScriptURL = pendingMeta.ScriptURL
 	metadata.Payload = pendingMeta.Payload
+	metadata.Auth = pendingMeta.Auth
 	return warnings
 }
 
@@ -582,9 +583,6 @@ func (h *TestHandler) prepareExecution(req *model.TestRequest) (*executionPrepar
 		return nil, fmt.Errorf("failed to write script: %w", err)
 	}
 
-	scriptgen.CleanupSummaries(h.outputDir)
-	scriptgen.CleanupPayloadArtifacts(h.outputDir)
-	scriptgen.CleanupAuthSummaries(h.outputDir)
 	return prepared, nil
 }
 
@@ -677,7 +675,7 @@ func (h *TestHandler) startPreparedExecution(ctx context.Context, testID string,
 	hasBuilder := req.URL != ""
 
 	h.orch.SetPhase(orchestrator.PhaseRunning, "Running load test...")
-	if err := h.orch.ResumeAll(ctx); err != nil {
+	if err := h.orch.ResumeAllForStart(ctx, prepared.controllable); err != nil {
 		_ = h.store.UpdateLoadTestResult(ctx, testID, "error", nil)
 		h.orch.SetPhase(orchestrator.PhaseError, "Failed to start workers")
 		return fmt.Errorf("failed to start workers: %w", err)
@@ -768,7 +766,10 @@ func (h *TestHandler) loadCompletionPayloadArtifact() string {
 	return scriptgen.ReadPayloadArtifact(h.outputDir)
 }
 
-func (h *TestHandler) loadCompletionAuthSummary() (*scriptgen.AuthSummaryData, string) {
+func (h *TestHandler) loadCompletionAuthSummary(metadata *model.TestMetadata) (*scriptgen.AuthSummaryData, string) {
+	if !hasConfiguredAuth(metadata) {
+		return nil, ""
+	}
 	authSummary, err := scriptgen.ReadAndMergeAuthSummaries(h.outputDir)
 	if err != nil {
 		return nil, ""
@@ -903,6 +904,10 @@ func (h *TestHandler) ExecuteTest(ctx context.Context, req model.TestRequest, us
 		return "", false, nil, err
 	}
 
+	scriptgen.CleanupSummaries(h.outputDir)
+	scriptgen.CleanupPayloadArtifacts(h.outputDir)
+	scriptgen.CleanupAuthSummaries(h.outputDir)
+
 	testID, err := h.createRunningLoadTest(ctx, req, userID, username, prepared)
 	if err != nil {
 		return "", false, nil, err
@@ -937,7 +942,7 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 	// (up to the configured completion buffer after stages complete), then writes handleSummary and exits.
 	rawSummary, summaryLoaded := h.loadCompletionSummary(testID, finalMetrics)
 	payloadArtifact := h.loadCompletionPayloadArtifact()
-	authSummary, rawAuthSummary := h.loadCompletionAuthSummary()
+	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(data.metadata)
 	if !summaryLoaded {
 		h.logger.Warn("could not read summary files after retries, P99 will be 0", "test_id", testID)
 	}
@@ -1067,7 +1072,7 @@ func (h *TestHandler) StopTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payloadArtifact := h.loadCompletionPayloadArtifact()
-	authSummary, rawAuthSummary := h.loadCompletionAuthSummary()
+	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(data.metadata)
 	if err := h.persistCompletedResult(r.Context(), testID, data, "", rawAuthSummary, payloadArtifact, authSummary); err != nil {
 		h.logger.Error("failed to persist completed result", "error", err)
 		httpError(w, "internal error", http.StatusInternalServerError)

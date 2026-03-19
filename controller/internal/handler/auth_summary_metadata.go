@@ -7,12 +7,21 @@ import (
 	"github.com/shiva-load-testing/controller/internal/scriptgen"
 )
 
-func applyAuthSummaryToMetadata(metadata *model.TestMetadata, authSummary *scriptgen.AuthSummaryData) {
-	if metadata == nil || authSummary == nil {
-		return
+func hasConfiguredAuth(metadata *model.TestMetadata) bool {
+	if metadata == nil || metadata.Auth == nil {
+		return false
 	}
-	if metadata.Auth == nil {
-		metadata.Auth = &model.AuthMetadata{}
+	auth := metadata.Auth
+	return auth.Mode != "" ||
+		auth.TokenURL != "" ||
+		auth.ClientAuthMethod != "" ||
+		auth.SecretSource != "" ||
+		auth.RefreshSkewSeconds > 0
+}
+
+func applyAuthSummaryToMetadata(metadata *model.TestMetadata, authSummary *scriptgen.AuthSummaryData) {
+	if metadata == nil || authSummary == nil || !hasConfiguredAuth(metadata) {
+		return
 	}
 	if metadata.Auth.Mode == "" {
 		metadata.Auth.Mode = authSummary.Mode
@@ -41,7 +50,7 @@ func applyAuthSummaryToMetadata(metadata *model.TestMetadata, authSummary *scrip
 }
 
 func hydrateAuthMetadataFromRawSummary(metadata *model.TestMetadata, rawAuthSummary string) *model.TestMetadata {
-	if strings.TrimSpace(rawAuthSummary) == "" {
+	if strings.TrimSpace(rawAuthSummary) == "" || !hasConfiguredAuth(metadata) {
 		return metadata
 	}
 

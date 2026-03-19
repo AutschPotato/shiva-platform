@@ -100,3 +100,48 @@ func TestBuildMetricsV2UsesBusinessSummaryAndAuthSplit(t *testing.T) {
 		t.Fatalf("expected quality flags to be populated")
 	}
 }
+
+func TestBuildMetricsV2DerivesZeroBusinessRequestsForAuthOnlyRun(t *testing.T) {
+	legacy := &model.AggregatedMetrics{
+		TotalRequests: 0,
+		HTTPSuccesses: 0,
+		HTTPFailures:  0,
+	}
+
+	rawSummary := `--- worker-1 ---
+{
+  "metrics": {
+    "http_reqs": {"values": {"count": 10}},
+    "http_req_failed": {"values": {"rate": 1}},
+    "iterations": {"values": {"count": 10}},
+    "auth_token_requests_total": {"values": {"count": 10}},
+    "auth_token_failure_total": {"values": {"count": 10}},
+    "auth_token_request_duration_ms": {"values": {"avg": 3, "p(95)": 4, "p(99)": 5, "max": 5}}
+  },
+  "state": {"testRunDurationMs": 6000}
+}`
+
+	metadata := &model.TestMetadata{
+		DurationS: 6,
+		Auth: &model.AuthMetadata{
+			Metrics: &model.AuthRuntimeMetrics{
+				TokenRequestsTotal: 10,
+				TokenFailureTotal:  10,
+			},
+		},
+	}
+
+	metrics := buildMetricsV2(legacy, rawSummary, metadata)
+	if metrics == nil {
+		t.Fatalf("expected metrics_v2")
+	}
+	if metrics.HTTPTotal.Requests != 10 {
+		t.Fatalf("expected total requests 10, got %v", metrics.HTTPTotal.Requests)
+	}
+	if metrics.HTTPAuxiliary.Requests != 10 {
+		t.Fatalf("expected auxiliary requests 10, got %v", metrics.HTTPAuxiliary.Requests)
+	}
+	if metrics.HTTPBusiness.Requests != 0 {
+		t.Fatalf("expected business requests 0 for auth-only run, got %v", metrics.HTTPBusiness.Requests)
+	}
+}

@@ -27,6 +27,11 @@ docker compose -f .\docker-compose.yml down
 
 This starts the local integrated platform stack with MySQL, controller, workers, dummy targets, and the target load balancer.
 
+## Working Model
+
+- This repository is the platform single source of truth for controller, workers, and runtime infrastructure.
+- Do not continue backend or runtime feature work in the legacy monorepo or in any exported staging directory.
+- Use short-lived feature branches such as `feature/...`, `bugfix/...`, or `chore/...`; keep `main` releasable.
 ## Owns
 
 - `controller/`
@@ -69,3 +74,4 @@ Key split and readiness references:
 - `controller/docs/deployment.md`
 - `docs/plans/platform/frontend_backend_split_execution_plan.md`
 - `docs/reference/architecture/separate_deployment_validation.md`
+
