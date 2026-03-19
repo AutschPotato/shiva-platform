@@ -232,7 +232,7 @@ func (s *Scheduler) nextFutureOccurrence(schedule *model.ScheduledTest, recovery
 	current := schedule.ScheduledAt
 
 	for i := 0; i < maxRecoveryAdvances; i++ {
-		nextAt, err := NextOccurrence(current, schedule.RecurrenceType, schedule.Timezone, schedule.RecurrenceEnd)
+		nextAt, err := NextIncludedOccurrence(current, schedule.RecurrenceType, schedule.Timezone, schedule.RecurrenceEnd, schedule.SkippedOccurrences)
 		if err != nil {
 			return time.Time{}, false, err
 		}
@@ -501,7 +501,7 @@ func (s *Scheduler) advanceSchedule(ctx context.Context, scheduleID string, fail
 	}
 
 	// Calculate next occurrence
-	nextAt, err := NextOccurrence(schedule.ScheduledAt, schedule.RecurrenceType, schedule.Timezone, schedule.RecurrenceEnd)
+	nextAt, err := NextIncludedOccurrence(schedule.ScheduledAt, schedule.RecurrenceType, schedule.Timezone, schedule.RecurrenceEnd, schedule.SkippedOccurrences)
 	if err != nil {
 		s.logger.Error("scheduler: failed to calculate next occurrence", "error", err)
 		_ = s.store.UpdateScheduleStatus(ctx, scheduleID, "failed")

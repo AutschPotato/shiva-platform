@@ -534,39 +534,40 @@ type TestTemplateRequest struct {
 // --- Scheduling ---
 
 type ScheduledTest struct {
-	ID                 string     `json:"id"`
-	Name               string     `json:"name"`
-	ProjectName        string     `json:"project_name"`
-	URL                string     `json:"url"`
-	Mode               string     `json:"mode"`
-	Executor           string     `json:"executor"`
-	Stages             []Stage    `json:"stages,omitempty"`
-	VUs                int        `json:"vus,omitempty"`
-	Duration           string     `json:"duration,omitempty"`
-	Rate               int        `json:"rate,omitempty"`
-	TimeUnit           string     `json:"time_unit,omitempty"`
-	PreAllocatedVUs    int        `json:"pre_allocated_vus,omitempty"`
-	MaxVUs             int        `json:"max_vus,omitempty"`
-	SleepSeconds       *float64   `json:"sleep_seconds,omitempty"`
-	ScriptContent      string     `json:"script_content,omitempty"`
-	ConfigContent      string     `json:"config_content,omitempty"`
-	HTTPMethod         string     `json:"http_method,omitempty"`
-	ContentType        string     `json:"content_type,omitempty"`
-	PayloadJSON        string     `json:"payload_json,omitempty"`
-	PayloadTargetKiB   int        `json:"payload_target_kib,omitempty"`
-	AuthConfig         AuthConfig `json:"auth,omitempty"`
-	ScheduledAt        time.Time  `json:"scheduled_at"`
-	EstimatedDurationS int        `json:"estimated_duration_s"`
-	Timezone           string     `json:"timezone"`
-	RecurrenceType     string     `json:"recurrence_type"`
-	RecurrenceRule     string     `json:"recurrence_rule,omitempty"`
-	RecurrenceEnd      *time.Time `json:"recurrence_end,omitempty"`
-	Status             string     `json:"status"`
-	Paused             bool       `json:"paused"`
-	UserID             int64      `json:"user_id"`
-	Username           string     `json:"username"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 string      `json:"id"`
+	Name               string      `json:"name"`
+	ProjectName        string      `json:"project_name"`
+	URL                string      `json:"url"`
+	Mode               string      `json:"mode"`
+	Executor           string      `json:"executor"`
+	Stages             []Stage     `json:"stages,omitempty"`
+	VUs                int         `json:"vus,omitempty"`
+	Duration           string      `json:"duration,omitempty"`
+	Rate               int         `json:"rate,omitempty"`
+	TimeUnit           string      `json:"time_unit,omitempty"`
+	PreAllocatedVUs    int         `json:"pre_allocated_vus,omitempty"`
+	MaxVUs             int         `json:"max_vus,omitempty"`
+	SleepSeconds       *float64    `json:"sleep_seconds,omitempty"`
+	ScriptContent      string      `json:"script_content,omitempty"`
+	ConfigContent      string      `json:"config_content,omitempty"`
+	HTTPMethod         string      `json:"http_method,omitempty"`
+	ContentType        string      `json:"content_type,omitempty"`
+	PayloadJSON        string      `json:"payload_json,omitempty"`
+	PayloadTargetKiB   int         `json:"payload_target_kib,omitempty"`
+	AuthConfig         AuthConfig  `json:"auth,omitempty"`
+	ScheduledAt        time.Time   `json:"scheduled_at"`
+	EstimatedDurationS int         `json:"estimated_duration_s"`
+	Timezone           string      `json:"timezone"`
+	RecurrenceType     string      `json:"recurrence_type"`
+	RecurrenceRule     string      `json:"recurrence_rule,omitempty"`
+	RecurrenceEnd      *time.Time  `json:"recurrence_end,omitempty"`
+	SkippedOccurrences []time.Time `json:"skipped_occurrences,omitempty"`
+	Status             string      `json:"status"`
+	Paused             bool        `json:"paused"`
+	UserID             int64       `json:"user_id"`
+	Username           string      `json:"username"`
+	CreatedAt          time.Time   `json:"created_at"`
+	UpdatedAt          time.Time   `json:"updated_at"`
 }
 
 // ToTestRequest converts a ScheduledTest to a TestRequest for execution.
@@ -643,15 +644,16 @@ type CreateScheduleRequest struct {
 }
 
 type CalendarEvent struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	ProjectName    string `json:"project_name"`
-	Start          string `json:"start"`
-	End            string `json:"end"`
-	Status         string `json:"status"`
-	RecurrenceType string `json:"recurrence_type"`
-	Username       string `json:"username"`
-	UserID         int64  `json:"user_id"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ProjectName     string `json:"project_name"`
+	Start           string `json:"start"`
+	End             string `json:"end"`
+	OccurrenceStart string `json:"occurrence_start"`
+	Status          string `json:"status"`
+	RecurrenceType  string `json:"recurrence_type"`
+	Username        string `json:"username"`
+	UserID          int64  `json:"user_id"`
 }
 
 type ScheduleConflict struct {
