@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -17,12 +18,15 @@ import (
 	"github.com/shiva-load-testing/controller/internal/store"
 )
 
+type scheduleOverlapChecker func(context.Context, *store.Store, scheduler.TimeSlot, string, *scheduler.RunningTestInfo) (*model.ScheduleConflict, error)
+
 type ScheduleHandler struct {
-	store     *store.Store
-	sched     *scheduler.Scheduler
-	active    scheduler.ActiveTestProvider
-	logger    *slog.Logger
-	secretSvc *secrets.Service
+	store          *store.Store
+	sched          *scheduler.Scheduler
+	active         scheduler.ActiveTestProvider
+	logger         *slog.Logger
+	secretSvc      *secrets.Service
+	overlapChecker scheduleOverlapChecker
 }
 
 type validatedScheduleCreate struct {
@@ -33,6 +37,13 @@ type validatedScheduleCreate struct {
 	durationS   int
 }
 
+type scheduleDeleteScope string
+
+const (
+	deleteScopeSingle scheduleDeleteScope = "single"
+	deleteScopeFuture scheduleDeleteScope = "future"
+)
+
 func NewScheduleHandler(s *store.Store, sched *scheduler.Scheduler, active scheduler.ActiveTestProvider, logger *slog.Logger, encryptionKey string) *ScheduleHandler {
 	var secretSvc *secrets.Service
 	if encryptionKey != "" {
@@ -41,15 +52,19 @@ func NewScheduleHandler(s *store.Store, sched *scheduler.Scheduler, active sched
 		}
 	}
 	return &ScheduleHandler{
-		store:     s,
-		sched:     sched,
-		active:    active,
-		logger:    logger,
-		secretSvc: secretSvc,
+		store:          s,
+		sched:          sched,
+		active:         active,
+		logger:         logger,
+		secretSvc:      secretSvc,
+		overlapChecker: scheduler.CheckOverlap,
 	}
 }
 
 func (h *ScheduleHandler) activeRunningTest() *scheduler.RunningTestInfo {
+	if h.active == nil {
+		return nil
+	}
 	if activeID := h.active.GetActiveTestID(); activeID != "" {
 		return &scheduler.RunningTestInfo{
 			TestID:    activeID,
@@ -154,11 +169,121 @@ func parseRecurrenceEnd(value *string) (*time.Time, error) {
 	return &t, nil
 }
 
+func normalizeOccurrence(t time.Time) time.Time {
+	return t.UTC().Truncate(time.Second)
+}
+
+func sameOccurrence(a, b time.Time) bool {
+	return normalizeOccurrence(a).Equal(normalizeOccurrence(b))
+}
+
+func hasPastOccurrence(candidate time.Time) bool {
+	return normalizeOccurrence(candidate).Before(normalizeOccurrence(time.Now().UTC().Add(-1 * time.Minute)))
+}
+
+func skippedOccurrenceExists(values []time.Time, candidate time.Time) bool {
+	for _, value := range values {
+		if sameOccurrence(value, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendSkippedOccurrence(values []time.Time, candidate time.Time) []time.Time {
+	if skippedOccurrenceExists(values, candidate) {
+		return values
+	}
+	return append(values, normalizeOccurrence(candidate))
+}
+
+func filterSkippedOccurrencesBefore(values []time.Time, cutoff time.Time) []time.Time {
+	if len(values) == 0 {
+		return nil
+	}
+	var filtered []time.Time
+	for _, value := range values {
+		if normalizeOccurrence(value).Before(normalizeOccurrence(cutoff)) {
+			filtered = append(filtered, normalizeOccurrence(value))
+		}
+	}
+	return filtered
+}
+
+func parseDeleteScope(r *http.Request, recurring bool) (scheduleDeleteScope, bool) {
+	switch r.URL.Query().Get("scope") {
+	case "single":
+		return deleteScopeSingle, true
+	case "future":
+		return deleteScopeFuture, true
+	case "":
+		if recurring {
+			return deleteScopeFuture, false
+		}
+		return deleteScopeSingle, false
+	default:
+		return "", false
+	}
+}
+
+func parseDeleteOccurrence(r *http.Request, fallback time.Time) (time.Time, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("occurrence"))
+	if raw == "" {
+		return normalizeOccurrence(fallback), nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return normalizeOccurrence(parsed), nil
+}
+
 func (h *ScheduleHandler) writeScheduleConflict(w http.ResponseWriter, conflict any) {
 	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":    "schedule conflicts with existing test",
 		"conflict": conflict,
 	})
+}
+
+func cloneScheduledTest(existing *model.ScheduledTest) *model.ScheduledTest {
+	clone := *existing
+	if existing.Stages != nil {
+		clone.Stages = append([]model.Stage(nil), existing.Stages...)
+	}
+	if existing.SkippedOccurrences != nil {
+		clone.SkippedOccurrences = append([]time.Time(nil), existing.SkippedOccurrences...)
+	}
+	return &clone
+}
+
+func (h *ScheduleHandler) checkScheduleOverlap(ctx context.Context, scheduledAt time.Time, durationS int, excludeID string) (*model.ScheduleConflict, error) {
+	checker := h.overlapChecker
+	if checker == nil {
+		checker = scheduler.CheckOverlap
+	}
+	proposed := scheduler.TimeSlot{
+		Start: scheduledAt,
+		End:   scheduledAt.Add(time.Duration(durationS) * time.Second),
+	}
+	return checker(ctx, h.store, proposed, excludeID, h.activeRunningTest())
+}
+
+func (h *ScheduleHandler) prepareUpdatedSchedule(ctx context.Context, existing *model.ScheduledTest, req *model.CreateScheduleRequest) (*model.ScheduledTest, *model.ScheduleConflict, error) {
+	candidate := cloneScheduledTest(existing)
+	if err := applyScheduleUpdates(candidate, req); err != nil {
+		return nil, nil, httpStatusError{Message: "invalid scheduled_at", Code: http.StatusBadRequest}
+	}
+	authCfg, err := buildStoredAuthConfig(req.Auth, &existing.AuthConfig, h.secretSvc, req.Auth.Enabled)
+	if err != nil {
+		return nil, nil, httpStatusError{Message: err.Error(), Code: http.StatusBadRequest}
+	}
+	candidate.AuthConfig = authCfg
+
+	conflict, err := h.checkScheduleOverlap(ctx, candidate.ScheduledAt, candidate.EstimatedDurationS, candidate.ID)
+	if err != nil {
+		return nil, nil, httpStatusError{Message: "internal error during conflict check", Code: http.StatusInternalServerError}
+	}
+	return candidate, conflict, nil
 }
 
 func applyScheduleUpdates(existing *model.ScheduledTest, req *model.CreateScheduleRequest) error {
@@ -236,11 +361,7 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for overlap
-	proposed := scheduler.TimeSlot{
-		Start: validated.scheduledAt,
-		End:   validated.scheduledAt.Add(time.Duration(validated.durationS) * time.Second),
-	}
-	conflict, err := scheduler.CheckOverlap(r.Context(), h.store, proposed, "", h.activeRunningTest())
+	conflict, err := h.checkScheduleOverlap(r.Context(), validated.scheduledAt, validated.durationS, "")
 	if err != nil {
 		h.logger.Error("overlap check failed", "error", err)
 		httpError(w, "internal error during conflict check", http.StatusInternalServerError)
@@ -360,37 +481,153 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := applyScheduleUpdates(existing, &req); err != nil {
-		httpError(w, "invalid scheduled_at", http.StatusBadRequest)
-		return
-	}
-	authCfg, err := buildStoredAuthConfig(req.Auth, &existing.AuthConfig, h.secretSvc, req.Auth.Enabled)
+	candidate, conflict, err := h.prepareUpdatedSchedule(r.Context(), existing, &req)
 	if err != nil {
-		httpError(w, err.Error(), http.StatusBadRequest)
+		if statusErr, ok := err.(httpStatusError); ok {
+			httpError(w, statusErr.Message, statusErr.Code)
+			return
+		}
+		httpError(w, "failed to update schedule", http.StatusInternalServerError)
 		return
 	}
-	existing.AuthConfig = authCfg
+	if conflict != nil {
+		h.writeScheduleConflict(w, conflict)
+		return
+	}
 
-	if err := h.store.UpdateSchedule(r.Context(), existing); err != nil {
+	if err := h.store.UpdateSchedule(r.Context(), candidate); err != nil {
 		httpError(w, "failed to update schedule", http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, existing)
+	writeJSON(w, http.StatusOK, candidate)
 }
 
 // Delete removes a scheduled test. Owner or admin only.
 func (h *ScheduleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if _, ok := h.managedSchedule(w, r, id); !ok {
+	existing, ok := h.managedSchedule(w, r, id)
+	if !ok {
 		return
 	}
 
-	if err := h.store.DeleteSchedule(r.Context(), id); err != nil {
-		httpError(w, "failed to delete schedule", http.StatusInternalServerError)
+	recurring := existing.RecurrenceType != "once"
+	scope, validScope := parseDeleteScope(r, recurring)
+	if scope == "" {
+		httpError(w, "invalid delete scope", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	if r.URL.Query().Get("scope") != "" && !validScope {
+		httpError(w, "invalid delete scope", http.StatusBadRequest)
+		return
+	}
+
+	occurrence, err := parseDeleteOccurrence(r, existing.ScheduledAt)
+	if err != nil {
+		httpError(w, "occurrence must be RFC3339 format", http.StatusBadRequest)
+		return
+	}
+	if hasPastOccurrence(occurrence) {
+		httpError(w, "past schedule occurrences are preserved and cannot be deleted", http.StatusConflict)
+		return
+	}
+
+	if existing.Status == "running" {
+		httpError(w, "cannot delete a running schedule", http.StatusConflict)
+		return
+	}
+
+	execCount, err := h.store.CountScheduleExecutions(r.Context(), id)
+	if err != nil {
+		httpError(w, "failed to inspect schedule history", http.StatusInternalServerError)
+		return
+	}
+
+	if !recurring {
+		if err := h.store.DeleteSchedule(r.Context(), id); err != nil {
+			httpError(w, "failed to delete schedule", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "deleted",
+			"scope":  string(deleteScopeSingle),
+		})
+		return
+	}
+
+	switch scope {
+	case deleteScopeSingle:
+		existing.SkippedOccurrences = appendSkippedOccurrence(existing.SkippedOccurrences, occurrence)
+
+		if sameOccurrence(existing.ScheduledAt, occurrence) {
+			nextAt, nextErr := scheduler.NextIncludedOccurrence(existing.ScheduledAt, existing.RecurrenceType, existing.Timezone, existing.RecurrenceEnd, existing.SkippedOccurrences)
+			if nextErr != nil {
+				httpError(w, "failed to advance recurring schedule", http.StatusInternalServerError)
+				return
+			}
+			if nextAt.IsZero() {
+				if execCount == 0 {
+					if err := h.store.DeleteSchedule(r.Context(), id); err != nil {
+						httpError(w, "failed to delete schedule", http.StatusInternalServerError)
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]string{
+						"status": "deleted",
+						"scope":  string(deleteScopeSingle),
+					})
+					return
+				}
+				cutoff := occurrence.Add(-1 * time.Second)
+				existing.RecurrenceEnd = &cutoff
+				existing.Status = "completed"
+			} else {
+				existing.ScheduledAt = nextAt
+				existing.Status = "scheduled"
+			}
+		}
+
+		if err := h.store.UpdateSchedule(r.Context(), existing); err != nil {
+			httpError(w, "failed to update schedule", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "updated",
+			"scope":  string(deleteScopeSingle),
+		})
+		return
+	case deleteScopeFuture:
+		cutoff := occurrence.Add(-1 * time.Second)
+		existing.RecurrenceEnd = &cutoff
+		existing.SkippedOccurrences = filterSkippedOccurrencesBefore(existing.SkippedOccurrences, occurrence)
+
+		if !existing.ScheduledAt.Before(occurrence) {
+			if execCount == 0 {
+				if err := h.store.DeleteSchedule(r.Context(), id); err != nil {
+					httpError(w, "failed to delete schedule", http.StatusInternalServerError)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]string{
+					"status": "deleted",
+					"scope":  string(deleteScopeFuture),
+				})
+				return
+			}
+			existing.Status = "completed"
+		}
+
+		if err := h.store.UpdateSchedule(r.Context(), existing); err != nil {
+			httpError(w, "failed to update schedule", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "updated",
+			"scope":  string(deleteScopeFuture),
+		})
+		return
+	default:
+		httpError(w, "invalid delete scope", http.StatusBadRequest)
+		return
+	}
 }
 
 // Pause pauses a recurring schedule. Owner or admin only.
@@ -474,20 +711,21 @@ func (h *ScheduleHandler) Calendar(w http.ResponseWriter, r *http.Request) {
 
 		slots := scheduler.ExpandOccurrences(
 			s.ScheduledAt, s.EstimatedDurationS,
-			s.RecurrenceType, s.Timezone, s.RecurrenceEnd,
+			s.RecurrenceType, s.Timezone, s.RecurrenceEnd, s.SkippedOccurrences,
 			from, to,
 		)
 		for _, slot := range slots {
 			events = append(events, model.CalendarEvent{
-				ID:             s.ID,
-				Name:           s.Name,
-				ProjectName:    s.ProjectName,
-				Start:          slot.Start.Format(time.RFC3339),
-				End:            slot.End.Format(time.RFC3339),
-				Status:         s.Status,
-				RecurrenceType: s.RecurrenceType,
-				Username:       s.Username,
-				UserID:         s.UserID,
+				ID:              s.ID,
+				Name:            s.Name,
+				ProjectName:     s.ProjectName,
+				Start:           slot.Start.Format(time.RFC3339),
+				End:             slot.End.Format(time.RFC3339),
+				OccurrenceStart: slot.Start.Format(time.RFC3339),
+				Status:          s.Status,
+				RecurrenceType:  s.RecurrenceType,
+				Username:        s.Username,
+				UserID:          s.UserID,
 			})
 		}
 	}

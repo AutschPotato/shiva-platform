@@ -1,4 +1,5 @@
 # Shiva Platform
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/AutschPotato/shiva-platform)
 
 Future standalone platform repository for the distributed k6 runtime.
 

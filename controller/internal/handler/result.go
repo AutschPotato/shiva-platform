@@ -49,7 +49,11 @@ func parseResultListParams(r *http.Request) (int, int, string) {
 	if offset < 0 {
 		offset = 0
 	}
-	return limit, offset, r.URL.Query().Get("search")
+	search := r.URL.Query().Get("search")
+	if search == "" {
+		search = r.URL.Query().Get("q")
+	}
+	return limit, offset, search
 }
 
 func canViewResult(role string, userID int64, lt *model.LoadTest) bool {

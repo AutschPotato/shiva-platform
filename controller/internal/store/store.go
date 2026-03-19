@@ -128,6 +128,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			recurrence_type VARCHAR(20) DEFAULT 'once',
 			recurrence_rule VARCHAR(255) DEFAULT '',
 			recurrence_end DATETIME DEFAULT NULL,
+			skipped_occurrences JSON DEFAULT NULL,
 			status VARCHAR(30) NOT NULL DEFAULT 'scheduled',
 			paused BOOLEAN NOT NULL DEFAULT FALSE,
 			user_id BIGINT NOT NULL,
@@ -218,6 +219,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"scheduled_tests", "auth_refresh_skew_seconds", "INT NOT NULL DEFAULT 30"},
 		{"scheduled_tests", "auth_secret_source", "VARCHAR(32) DEFAULT ''"},
 		{"scheduled_tests", "auth_secret_configured", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"scheduled_tests", "skipped_occurrences", "JSON DEFAULT NULL"},
 		{"users", "must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"},
 	}
 	for _, c := range addColumnIfMissing {
@@ -977,22 +979,44 @@ const scheduledTestSelect = `SELECT id, name, project_name, url, mode, executor,
 		 script_content, config_content, http_method, content_type, payload_json, payload_target_kib,
 		 auth_enabled, auth_mode, auth_token_url, auth_client_id, auth_client_secret_encrypted, auth_client_auth_method, auth_refresh_skew_seconds, auth_secret_source, auth_secret_configured,
 		 scheduled_at, estimated_duration_s, timezone,
-		 recurrence_type, recurrence_rule, recurrence_end, status, paused, user_id, username,
+		 recurrence_type, recurrence_rule, recurrence_end, skipped_occurrences, status, paused, user_id, username,
 		 created_at, updated_at
 		 FROM scheduled_tests`
+
+func encodeSkippedOccurrences(values []time.Time) any {
+	if len(values) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return nil
+	}
+	return string(payload)
+}
+
+func decodeSkippedOccurrences(raw sql.NullString) []time.Time {
+	if !raw.Valid || raw.String == "" {
+		return nil
+	}
+	var decoded []time.Time
+	if err := json.Unmarshal([]byte(raw.String), &decoded); err != nil {
+		return nil
+	}
+	return decoded
+}
 
 func scanScheduledTest(scanner scheduledTestScanner, st *model.ScheduledTest) error {
 	var stagesJSON []byte
 	var sleepSec sql.NullFloat64
 	var recEnd sql.NullTime
-	var payloadJSON, authMode, authTokenURL, authClientID, authClientSecretEncrypted, authSecretSource sql.NullString
+	var payloadJSON, authMode, authTokenURL, authClientID, authClientSecretEncrypted, authSecretSource, skippedOccurrences sql.NullString
 
 	if err := scanner.Scan(&st.ID, &st.Name, &st.ProjectName, &st.URL, &st.Mode, &st.Executor, &stagesJSON,
 		&st.VUs, &st.Duration, &st.Rate, &st.TimeUnit, &st.PreAllocatedVUs, &st.MaxVUs, &sleepSec,
 		&st.ScriptContent, &st.ConfigContent, &st.HTTPMethod, &st.ContentType, &payloadJSON, &st.PayloadTargetKiB,
 		&st.AuthConfig.Enabled, &authMode, &authTokenURL, &authClientID, &authClientSecretEncrypted, &st.AuthConfig.ClientAuthMethod, &st.AuthConfig.RefreshSkewSeconds, &authSecretSource, &st.AuthConfig.SecretConfigured,
 		&st.ScheduledAt, &st.EstimatedDurationS, &st.Timezone,
-		&st.RecurrenceType, &st.RecurrenceRule, &recEnd, &st.Status, &st.Paused, &st.UserID, &st.Username,
+		&st.RecurrenceType, &st.RecurrenceRule, &recEnd, &skippedOccurrences, &st.Status, &st.Paused, &st.UserID, &st.Username,
 		&st.CreatedAt, &st.UpdatedAt,
 	); err != nil {
 		return err
@@ -1012,6 +1036,7 @@ func scanScheduledTest(scanner scheduledTestScanner, st *model.ScheduledTest) er
 	if recEnd.Valid {
 		st.RecurrenceEnd = &recEnd.Time
 	}
+	st.SkippedOccurrences = decodeSkippedOccurrences(skippedOccurrences)
 
 	return nil
 }
@@ -1077,14 +1102,16 @@ func scanScheduleExecution(scanner scheduleExecutionScanner, ex *model.ScheduleE
 
 func scanRecurringSchedule(scanner scheduledTestScanner, st *model.ScheduledTest) error {
 	var recEnd sql.NullTime
+	var skippedOccurrences sql.NullString
 	if err := scanner.Scan(&st.ID, &st.Name, &st.ProjectName, &st.ScheduledAt,
 		&st.EstimatedDurationS, &st.Timezone, &st.RecurrenceType, &st.RecurrenceRule,
-		&recEnd, &st.Status, &st.Username, &st.UserID); err != nil {
+		&recEnd, &skippedOccurrences, &st.Status, &st.Username, &st.UserID); err != nil {
 		return err
 	}
 	if recEnd.Valid {
 		st.RecurrenceEnd = &recEnd.Time
 	}
+	st.SkippedOccurrences = decodeSkippedOccurrences(skippedOccurrences)
 	return nil
 }
 
@@ -1128,15 +1155,15 @@ func (s *Store) CreateSchedule(ctx context.Context, st *model.ScheduledTest) err
 		 script_content, config_content, http_method, content_type, payload_json, payload_target_kib,
 		 auth_enabled, auth_mode, auth_token_url, auth_client_id, auth_client_secret_encrypted, auth_client_auth_method, auth_refresh_skew_seconds, auth_secret_source, auth_secret_configured,
 		 scheduled_at, estimated_duration_s, timezone,
-		 recurrence_type, recurrence_rule, recurrence_end, status, paused, user_id, username)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 recurrence_type, recurrence_rule, recurrence_end, skipped_occurrences, status, paused, user_id, username)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		st.ID, st.Name, st.ProjectName, st.URL, st.Mode, st.Executor, string(stagesJSON),
 		st.VUs, st.Duration, st.Rate, st.TimeUnit, st.PreAllocatedVUs, st.MaxVUs, st.SleepSeconds,
 		st.ScriptContent, st.ConfigContent, defaultHTTPMethod(st.HTTPMethod), defaultContentType(st.ContentType), nullString(st.PayloadJSON), st.PayloadTargetKiB,
 		st.AuthConfig.Enabled, nullString(st.AuthConfig.Mode), nullString(st.AuthConfig.TokenURL), nullString(st.AuthConfig.ClientID), nullString(st.AuthConfig.ClientSecretEncrypted),
 		defaultAuthClientAuthMethod(st.AuthConfig.ClientAuthMethod), defaultAuthRefreshSkewSeconds(st.AuthConfig.RefreshSkewSeconds), nullString(st.AuthConfig.SecretSource), authConfigured(st.AuthConfig),
 		st.ScheduledAt, st.EstimatedDurationS, st.Timezone,
-		st.RecurrenceType, st.RecurrenceRule, st.RecurrenceEnd, st.Status, st.Paused,
+		st.RecurrenceType, st.RecurrenceRule, st.RecurrenceEnd, encodeSkippedOccurrences(st.SkippedOccurrences), st.Status, st.Paused,
 		st.UserID, st.Username,
 	)
 	return err
@@ -1166,7 +1193,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, st *model.ScheduledTest) err
 		 script_content=?, config_content=?, http_method=?, content_type=?, payload_json=?, payload_target_kib=?,
 		 auth_enabled=?, auth_mode=?, auth_token_url=?, auth_client_id=?, auth_client_secret_encrypted=?, auth_client_auth_method=?, auth_refresh_skew_seconds=?, auth_secret_source=?, auth_secret_configured=?,
 		 scheduled_at=?, estimated_duration_s=?, timezone=?,
-		 recurrence_type=?, recurrence_rule=?, recurrence_end=?, status=?, paused=?
+		 recurrence_type=?, recurrence_rule=?, recurrence_end=?, skipped_occurrences=?, status=?, paused=?
 		 WHERE id=?`,
 		st.Name, st.ProjectName, st.URL, st.Mode, st.Executor, string(stagesJSON),
 		st.VUs, st.Duration, st.Rate, st.TimeUnit, st.PreAllocatedVUs, st.MaxVUs, st.SleepSeconds,
@@ -1174,7 +1201,7 @@ func (s *Store) UpdateSchedule(ctx context.Context, st *model.ScheduledTest) err
 		st.AuthConfig.Enabled, nullString(st.AuthConfig.Mode), nullString(st.AuthConfig.TokenURL), nullString(st.AuthConfig.ClientID), nullString(st.AuthConfig.ClientSecretEncrypted),
 		defaultAuthClientAuthMethod(st.AuthConfig.ClientAuthMethod), defaultAuthRefreshSkewSeconds(st.AuthConfig.RefreshSkewSeconds), nullString(st.AuthConfig.SecretSource), authConfigured(st.AuthConfig),
 		st.ScheduledAt, st.EstimatedDurationS, st.Timezone,
-		st.RecurrenceType, st.RecurrenceRule, st.RecurrenceEnd, st.Status, st.Paused,
+		st.RecurrenceType, st.RecurrenceRule, st.RecurrenceEnd, encodeSkippedOccurrences(st.SkippedOccurrences), st.Status, st.Paused,
 		st.ID,
 	)
 	return err
@@ -1218,8 +1245,8 @@ func (s *Store) GetDueSchedule(ctx context.Context) (*model.ScheduledTest, error
 	return st, nil
 }
 
-// GetOverlappingSchedules returns schedules whose time windows overlap with the proposed slot.
-// Buffer (30s) is included in the query.
+// GetOverlappingSchedules returns schedules whose buffered time windows overlap with the proposed slot.
+// estimated_duration_s is already stored with the scheduling buffer applied at write time.
 func (s *Store) GetOverlappingSchedules(ctx context.Context, start, end time.Time, excludeID string) ([]model.ScheduledTest, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, project_name, scheduled_at, estimated_duration_s, recurrence_type, status, username, user_id
@@ -1228,7 +1255,7 @@ func (s *Store) GetOverlappingSchedules(ctx context.Context, start, end time.Tim
 		 AND paused = FALSE
 		 AND id != ?
 		 AND scheduled_at < ?
-		 AND DATE_ADD(scheduled_at, INTERVAL (estimated_duration_s + 30) SECOND) > ?
+		 AND DATE_ADD(scheduled_at, INTERVAL estimated_duration_s SECOND) > ?
 		 ORDER BY scheduled_at ASC`,
 		excludeID, end, start,
 	)
@@ -1252,7 +1279,7 @@ func (s *Store) GetOverlappingSchedules(ctx context.Context, start, end time.Tim
 func (s *Store) GetRecurringSchedules(ctx context.Context) ([]model.ScheduledTest, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, project_name, scheduled_at, estimated_duration_s, timezone,
-		 recurrence_type, recurrence_rule, recurrence_end, status, username, user_id
+		 recurrence_type, recurrence_rule, recurrence_end, skipped_occurrences, status, username, user_id
 		 FROM scheduled_tests
 		 WHERE status = 'scheduled' AND paused = FALSE AND recurrence_type != 'once'
 		 ORDER BY scheduled_at ASC`)
@@ -1308,6 +1335,14 @@ func (s *Store) ListExecutions(ctx context.Context, scheduleID string) ([]model.
 		result = append(result, ex)
 	}
 	return result, rows.Err()
+}
+
+func (s *Store) CountScheduleExecutions(ctx context.Context, scheduleID string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schedule_executions WHERE schedule_id = ?`, scheduleID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // CountConsecutiveFailures counts how many of the last N executions for a schedule failed consecutively.

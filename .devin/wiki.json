@@ -1,0 +1,12 @@
+{
+  "repo_notes": [
+    {
+      "content": "This repository is the active source-of-truth for the Shiva Platform split repo. Documentation should prioritize the Go controller in controller/, especially cmd/, internal/handler, internal/scheduler, and internal/store, and then explain how docker-compose.yml, k6-worker/, k6-scripts/, loadbalancer/, and dummy-service/ work together as the distributed k6 runtime.",
+      "author": "Codex"
+    },
+    {
+      "content": "Important workflows to document are local Docker Compose startup from the repo root, schedule creation and execution, recurring and manual runs, result collection, and Windows or Docker Desktop compatibility for worker startup and shell-based scripts.",
+      "author": "Codex"
+    }
+  ]
+}

@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+func normalizeOccurrenceTime(t time.Time) time.Time {
+	return t.UTC().Truncate(time.Second)
+}
+
+func isSkippedOccurrence(target time.Time, skipped []time.Time) bool {
+	normalizedTarget := normalizeOccurrenceTime(target)
+	for _, candidate := range skipped {
+		if normalizeOccurrenceTime(candidate).Equal(normalizedTarget) {
+			return true
+		}
+	}
+	return false
+}
+
 // NextOccurrence calculates the next execution time for a recurring schedule.
 // Returns zero time if the schedule is one-time or past its end date.
 // All calculations are timezone-aware to handle DST transitions correctly.
@@ -46,12 +60,30 @@ func NextOccurrence(current time.Time, recurrenceType, timezone string, recurren
 	return nextUTC, nil
 }
 
+// NextIncludedOccurrence returns the next recurrence that is not explicitly skipped.
+func NextIncludedOccurrence(current time.Time, recurrenceType, timezone string, recurrenceEnd *time.Time, skipped []time.Time) (time.Time, error) {
+	nextBase := current
+
+	for i := 0; i < 100; i++ {
+		next, err := NextOccurrence(nextBase, recurrenceType, timezone, recurrenceEnd)
+		if err != nil || next.IsZero() {
+			return next, err
+		}
+		if !isSkippedOccurrence(next, skipped) {
+			return next, nil
+		}
+		nextBase = next
+	}
+
+	return time.Time{}, fmt.Errorf("too many skipped occurrences while resolving next recurrence")
+}
+
 // ExpandOccurrences generates all occurrences of a recurring schedule within a time range.
 // Used for calendar view and overlap detection.
-func ExpandOccurrences(baseTime time.Time, durationS int, recurrenceType, timezone string, recurrenceEnd *time.Time, rangeStart, rangeEnd time.Time) []TimeSlot {
+func ExpandOccurrences(baseTime time.Time, durationS int, recurrenceType, timezone string, recurrenceEnd *time.Time, skipped []time.Time, rangeStart, rangeEnd time.Time) []TimeSlot {
 	if recurrenceType == "once" {
 		end := baseTime.Add(time.Duration(durationS) * time.Second)
-		if baseTime.Before(rangeEnd) && end.After(rangeStart) {
+		if !isSkippedOccurrence(baseTime, skipped) && baseTime.Before(rangeEnd) && end.After(rangeStart) {
 			return []TimeSlot{{Start: baseTime, End: end}}
 		}
 		return nil
@@ -75,7 +107,7 @@ func ExpandOccurrences(baseTime time.Time, durationS int, recurrenceType, timezo
 		}
 
 		end := current.Add(time.Duration(durationS) * time.Second)
-		if end.After(rangeStart) && current.Before(rangeEnd) {
+		if !isSkippedOccurrence(current, skipped) && end.After(rangeStart) && current.Before(rangeEnd) {
 			slots = append(slots, TimeSlot{Start: current, End: end})
 		}
 

@@ -167,12 +167,14 @@ services:
 
   worker1:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
+    build:
+      context: .
+      dockerfile: ./k6-worker/Dockerfile
     networks: [loadtest-net]
     volumes: &worker-volumes
       - ./k6-scripts:/scripts:ro
       - k6-output:/output
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -187,10 +189,9 @@ services:
 
   worker2:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -205,10 +206,9 @@ services:
 
   worker3:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -223,10 +223,9 @@ services:
 
   worker4:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -241,10 +240,9 @@ services:
 
   worker5:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -259,10 +257,9 @@ services:
 
   worker6:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -277,10 +274,9 @@ services:
 
   worker7:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -295,10 +291,9 @@ services:
 
   worker8:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -313,10 +308,9 @@ services:
 
   worker9:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
@@ -331,10 +325,9 @@ services:
 
   worker10:
     <<: *default-logging
-    image: grafana/k6:latest
+    image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
     volumes: *worker-volumes
-    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
     command: []
     restart: unless-stopped
     environment:
