@@ -8,7 +8,7 @@ on:
       - "dummy-service/**"
       - "loadbalancer/**"
       - "k6-scripts/**"
-      - "docker-compose.platform.yml"
+      - "docker-compose.yml"
       - ".github/workflows/platform-ci.yml"
   pull_request:
     paths:
@@ -16,7 +16,7 @@ on:
       - "dummy-service/**"
       - "loadbalancer/**"
       - "k6-scripts/**"
-      - "docker-compose.platform.yml"
+      - "docker-compose.yml"
       - ".github/workflows/platform-ci.yml"
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify platform compose config
-        run: docker compose -f docker-compose.platform.yml config > platform-compose.rendered.yml
+        run: docker compose -f docker-compose.yml config > platform-compose.rendered.yml
 
       - name: Upload rendered compose
         uses: actions/upload-artifact@v4
