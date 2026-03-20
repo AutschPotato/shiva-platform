@@ -1,4 +1,28 @@
 #!/bin/sh
+# --- Fetch scripts from controller (Kubernetes mode) ---
+if [ "${SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER:-}" = "true" ] || [ "${SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER:-}" = "1" ]; then
+  CONTROLLER_URL="${CONTROLLER_URL:-http://controller:8080}"
+  mkdir -p /scripts
+
+  attempt=1
+  while [ "$attempt" -le 30 ]; do
+    if wget -q -O /scripts/current-test.js "$CONTROLLER_URL/api/internal/scripts/current-test.js"; then
+      break
+    fi
+    if [ "$attempt" -eq 30 ]; then
+      echo "failed to fetch current-test.js from $CONTROLLER_URL after 30 attempts" >&2
+      exit 1
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+
+  rm -f /scripts/config.json /scripts/k6-env.sh
+  wget -q -O /scripts/config.json "$CONTROLLER_URL/api/internal/scripts/config.json" || true
+  wget -q -O /scripts/k6-env.sh "$CONTROLLER_URL/api/internal/scripts/k6-env.sh" || true
+fi
+# --- End fetch ---
+
 SCRIPT="/scripts/current-test.js"
 CONFIG="/scripts/config.json"
 ENV_FILE="/scripts/k6-env.sh"

@@ -61,6 +61,7 @@ func NewRouter(deps Deps) http.Handler {
 	resultH := handler.NewResultHandler(deps.Store, deps.Logger)
 	dashboardH := handler.NewDashboardHandler(deps.Orchestrator, deps.Logger)
 	healthH := handler.NewHealthHandler(deps.Orchestrator)
+	scriptsH := handler.NewScriptsHandler(deps.ScriptsDir, deps.Logger)
 	templateH := handler.NewTemplateHandler(deps.Store, deps.Logger, deps.EncryptionKey)
 	scheduleH := handler.NewScheduleHandler(deps.Store, deps.Scheduler, deps.Orchestrator, deps.Logger, deps.EncryptionKey)
 
@@ -69,6 +70,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/auth/login", authH.Login)
 	r.Post("/api/auth/forgot-password", authH.ForgotPassword)
 	r.Post("/api/auth/reset-password", authH.CompletePasswordReset)
+	r.Get("/api/internal/scripts/{filename}", scriptsH.ServeScript)
 
 	// Protected routes (JWT + optional API key)
 	r.Group(func(r chi.Router) {
