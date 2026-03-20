@@ -6,3 +6,5 @@ coverage.out
 *.out
 .env
 .env.local
+.gocache/
+.gomodcache/
