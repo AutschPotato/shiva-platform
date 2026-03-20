@@ -12,3 +12,4 @@ k6-scripts/current-test.js
 k6-scripts/k6-env.sh
 
 artifacts/
+.local/
