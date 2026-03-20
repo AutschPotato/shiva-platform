@@ -137,6 +137,15 @@ type LoadTest struct {
 	URL               string          `json:"url"`
 	Status            string          `json:"status"`
 	ResultJSON        json.RawMessage `json:"result_json,omitempty"`
+	Executor          string          `json:"executor,omitempty"`
+	Stages            []Stage         `json:"stages,omitempty"`
+	VUs               int             `json:"vus,omitempty"`
+	Duration          string          `json:"duration,omitempty"`
+	Rate              int             `json:"rate,omitempty"`
+	TimeUnit          string          `json:"time_unit,omitempty"`
+	PreAllocatedVUs   int             `json:"pre_allocated_vus,omitempty"`
+	MaxVUs            int             `json:"max_vus,omitempty"`
+	SleepSeconds      *float64        `json:"sleep_seconds,omitempty"`
 	ScriptContent     string          `json:"script_content,omitempty"`
 	ConfigContent     string          `json:"config_content,omitempty"`
 	PayloadSourceJSON string          `json:"payload_source_json,omitempty"`
