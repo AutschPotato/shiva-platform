@@ -42,13 +42,13 @@ This starts the local integrated platform stack with MySQL, controller, workers,
 
 The default local Docker Compose setup continues to use the shared `/scripts` volume and does not enable the worker fetch mode.
 
-If you want to smoke-test the opt-in worker fetch flow locally, use the local-only override at `.local/docker-compose.fetch.override.yml` together with the normal stack:
+If you want to smoke-test the opt-in worker fetch flow locally, use the versioned override at `.local/docker-compose.fetch.override.yml` together with the normal stack:
 
 ```powershell
 docker compose -f .\docker-compose.yml -f .\.local\docker-compose.fetch.override.yml up -d mysql controller worker1 target-lb dummy1
 ```
 
-The `.local/` directory is ignored by Git on purpose. Detailed fetch-mode notes live in [`k6-scripts/README.md`](./k6-scripts/README.md).
+The override file is kept in the repository on purpose so the fetch-test setup stays reproducible across machines. Only the writable runtime directory `.local/fetch-worker-scripts/` is ignored by Git. Detailed fetch-mode notes live in [`k6-scripts/README.md`](./k6-scripts/README.md).
 
 ## Working Model
 

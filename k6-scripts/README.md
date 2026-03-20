@@ -28,9 +28,9 @@ The worker's local `/scripts` path must be writable in fetch mode.
 
 ## Local Fetch Smoke Test
 
-To test the fetch feature locally without changing the versioned `docker-compose.yml`, use the non-versioned override at `.local/docker-compose.fetch.override.yml`.
+To test the fetch feature locally without changing the versioned `docker-compose.yml`, use the versioned override at `.local/docker-compose.fetch.override.yml`.
 
-The repository's `.gitignore` ignores the entire `.local/` directory on purpose, so this override remains local-only.
+The override file is intentionally kept in the repository so the fetch-test setup is reproducible across machines. Only the writable runtime directory `.local/fetch-worker-scripts/` is ignored by Git.
 
 Override contents:
 

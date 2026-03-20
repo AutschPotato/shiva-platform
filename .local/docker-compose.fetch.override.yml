@@ -1,0 +1,12 @@
+services:
+  controller:
+    environment:
+      K6_WORKERS: "worker1:6565"
+
+  worker1:
+    environment:
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
+    volumes:
+      - ./.local/fetch-worker-scripts:/scripts
+      - k6-output:/output
