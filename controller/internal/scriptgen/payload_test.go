@@ -281,6 +281,53 @@ func TestWriteEnvFileEncodesPayloadJSONAsBase64(t *testing.T) {
 	}
 }
 
+func TestWriteEnvFileExportsVariablesForEntrypointShell(t *testing.T) {
+	scriptsDir := t.TempDir()
+
+	err := WriteEnvFile(scriptsDir, map[string]string{
+		"SHIVA_ARTIFACT_UPLOAD_ENABLED": "true",
+		"SHIVA_ARTIFACT_TEST_ID":        "run-123",
+	})
+	if err != nil {
+		t.Fatalf("expected env file to be written, got error: %v", err)
+	}
+
+	contentBytes, err := os.ReadFile(filepath.Join(scriptsDir, "k6-env.sh"))
+	if err != nil {
+		t.Fatalf("failed to read env file: %v", err)
+	}
+	content := string(contentBytes)
+
+	if !strings.Contains(content, "export SHIVA_ARTIFACT_UPLOAD_ENABLED='true'") {
+		t.Fatalf("expected artifact upload flag to be exported for the entrypoint shell")
+	}
+	if !strings.Contains(content, "export SHIVA_ARTIFACT_TEST_ID='run-123'") {
+		t.Fatalf("expected artifact test id to be exported for the entrypoint shell")
+	}
+	if !strings.Contains(content, "K6_ENV_FLAGS=\"$K6_ENV_FLAGS -e SHIVA_ARTIFACT_UPLOAD_ENABLED='true'\"") {
+		t.Fatalf("expected artifact upload flag to remain present in k6 env flags")
+	}
+}
+
+func TestInjectSummaryExportIncludesDirectArtifactUploadHook(t *testing.T) {
+	script := "export default function () { return 1; }"
+
+	injected := InjectSummaryExport(script)
+
+	if !strings.Contains(injected, "import http from 'k6/http';") {
+		t.Fatalf("expected direct http import for artifact uploads")
+	}
+	if !strings.Contains(injected, "function shivaUploadArtifact(") {
+		t.Fatalf("expected upload helper to be injected")
+	}
+	if !strings.Contains(injected, "shivaUploadArtifact('summary', summaryContent, 'application/json');") {
+		t.Fatalf("expected summary uploads to be attempted directly from handleSummary")
+	}
+	if !strings.Contains(injected, "shivaUploadArtifact('auth-summary', authSummaryContent, 'application/json');") {
+		t.Fatalf("expected auth summary uploads to be attempted directly from handleSummary")
+	}
+}
+
 func TestGenerateFromBuilderDoesNotApplyDefaultThinkTimeToArrivalRateExecutors(t *testing.T) {
 	req := &model.TestRequest{
 		URL:      "https://api.example.com/orders",

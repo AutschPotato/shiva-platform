@@ -1,6 +1,9 @@
 package completion
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestRegistryStoresArtifactsIdempotently(t *testing.T) {
 	registry := NewRegistry()
@@ -35,5 +38,25 @@ func TestRegistryRejectsUnknownWorkerAndBadToken(t *testing.T) {
 	}
 	if err := registry.StoreArtifact("run-1", "worker2", "token-1", ArtifactSummary, "application/json", []byte(`{}`)); err == nil {
 		t.Fatalf("expected unknown worker error")
+	}
+}
+
+func TestRegistryRetainsClosedRunsWithinLateUploadTTL(t *testing.T) {
+	registry := newRegistryWithTTL(50 * time.Millisecond)
+	registry.RegisterRun("run-1", []string{"worker1"}, "token-1")
+	registry.RemoveRun("run-1")
+
+	if err := registry.StoreArtifact("run-1", "worker1", "token-1", ArtifactSummary, "application/json", []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("expected late upload to be accepted before ttl expiry, got %v", err)
+	}
+
+	if _, ok := registry.Snapshot("run-1"); !ok {
+		t.Fatalf("expected closed run snapshot to remain available during ttl")
+	}
+
+	time.Sleep(80 * time.Millisecond)
+
+	if err := registry.StoreArtifact("run-1", "worker1", "token-1", ArtifactSummary, "application/json", []byte(`{"late":true}`)); err != ErrUnknownRun {
+		t.Fatalf("expected run to expire after ttl, got %v", err)
 	}
 }

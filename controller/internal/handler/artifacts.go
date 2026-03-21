@@ -29,6 +29,12 @@ func (h *TestHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.completionRegistry.StoreArtifact(testID, workerID, uploadToken, artifactType, r.Header.Get("Content-Type"), body); err != nil {
+		h.logger.Warn("artifact upload rejected",
+			"test_id", testID,
+			"worker_id", workerID,
+			"artifact_type", artifactType,
+			"error", err,
+		)
 		switch {
 		case errors.Is(err, completion.ErrUnknownRun):
 			httpError(w, "unknown test run", http.StatusNotFound)
@@ -49,6 +55,15 @@ func (h *TestHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 		"artifact_type", artifactType,
 		"size_bytes", len(body),
 	)
+
+	if err := h.enrichCompletedResultFromRegistry(r.Context(), testID); err != nil {
+		h.logger.Warn("late artifact enrichment failed",
+			"test_id", testID,
+			"worker_id", workerID,
+			"artifact_type", artifactType,
+			"error", err,
+		)
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":        "accepted",

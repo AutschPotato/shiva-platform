@@ -40,8 +40,9 @@ type Snapshot struct {
 }
 
 type Registry struct {
-	mu   sync.RWMutex
-	runs map[string]*runState
+	mu            sync.RWMutex
+	runs          map[string]*runState
+	lateUploadTTL time.Duration
 }
 
 type runState struct {
@@ -51,11 +52,21 @@ type runState struct {
 	uploadToken     string
 	artifacts       map[ArtifactType]map[string]Artifact
 	createdAt       time.Time
+	closedAt        time.Time
+	expiresAt       time.Time
 }
 
 func NewRegistry() *Registry {
+	return newRegistryWithTTL(5 * time.Minute)
+}
+
+func newRegistryWithTTL(lateUploadTTL time.Duration) *Registry {
+	if lateUploadTTL <= 0 {
+		lateUploadTTL = 5 * time.Minute
+	}
 	return &Registry{
-		runs: make(map[string]*runState),
+		runs:          make(map[string]*runState),
+		lateUploadTTL: lateUploadTTL,
 	}
 }
 
@@ -76,6 +87,7 @@ func (r *Registry) RegisterRun(testID string, expectedWorkers []string, uploadTo
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.cleanupExpiredLocked(time.Now())
 	r.runs[testID] = &runState{
 		testID:          testID,
 		expectedWorkers: normalizedWorkers,
@@ -93,12 +105,20 @@ func (r *Registry) RegisterRun(testID string, expectedWorkers []string, uploadTo
 func (r *Registry) RemoveRun(testID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.runs, testID)
+	r.cleanupExpiredLocked(time.Now())
+	run, ok := r.runs[testID]
+	if !ok {
+		return
+	}
+	now := time.Now()
+	run.closedAt = now
+	run.expiresAt = now.Add(r.lateUploadTTL)
 }
 
 func (r *Registry) StoreArtifact(testID, workerID, uploadToken string, artifactType ArtifactType, contentType string, content []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.cleanupExpiredLocked(time.Now())
 
 	run, ok := r.runs[testID]
 	if !ok {
@@ -125,9 +145,18 @@ func (r *Registry) StoreArtifact(testID, workerID, uploadToken string, artifactT
 
 func (r *Registry) Snapshot(testID string) (Snapshot, bool) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	run, ok := r.runs[testID]
+	r.mu.RUnlock()
+
+	if !ok {
+		return Snapshot{}, false
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupExpiredLocked(time.Now())
+
+	run, ok = r.runs[testID]
 	if !ok {
 		return Snapshot{}, false
 	}
@@ -151,6 +180,21 @@ func (r *Registry) Snapshot(testID string) (Snapshot, bool) {
 		Artifacts:       artifacts,
 		CreatedAt:       run.createdAt,
 	}, true
+}
+
+func (r *Registry) cleanupExpiredLocked(now time.Time) {
+	for testID, run := range r.runs {
+		if run == nil {
+			delete(r.runs, testID)
+			continue
+		}
+		if run.expiresAt.IsZero() {
+			continue
+		}
+		if now.After(run.expiresAt) {
+			delete(r.runs, testID)
+		}
+	}
 }
 
 func BuildRawSummary(snapshot Snapshot, artifactType ArtifactType) string {

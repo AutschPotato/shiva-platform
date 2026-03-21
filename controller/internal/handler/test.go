@@ -540,11 +540,6 @@ func summaryCollectionFromRaw(expectedWorkers []string, raw string, finalMetrics
 			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
 		}, fmt.Errorf("empty raw summary content")
 	}
-	if strings.Contains(raw, `"testRunDurationMs":0`) {
-		return summaryCollectionResult{
-			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
-		}, fmt.Errorf("summary files contain empty data")
-	}
 
 	mergedSummary, err := scriptgen.ParseRawSummaryContent(raw)
 	if err != nil {
@@ -681,6 +676,14 @@ func (h *TestHandler) persistCompletedResult(ctx context.Context, testID string,
 
 	metricsV2 := buildMetricsV2(data.metrics, rawSummary, data.metadata)
 	result := buildCompletedResult(testID, data.metrics, metricsV2, data.timeSeries, data.metadata, data.warnings, rawSummary, rawAuthSummary)
+	if enriched, mergedPayloadContent, changed := mergeRegistryArtifactsIntoResult(result, h.completionRegistry, testID, payloadContent); changed {
+		result = enriched
+		payloadContent = mergedPayloadContent
+		h.logger.Info("merged latest registry artifacts into completed result",
+			"test_id", testID,
+			"artifact_collection_status", artifactCollectionStatus(result.Metadata),
+		)
+	}
 
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -698,6 +701,13 @@ func (h *TestHandler) persistCompletedResult(ctx context.Context, testID string,
 	}
 
 	return nil
+}
+
+func artifactCollectionStatus(metadata *model.TestMetadata) string {
+	if metadata == nil || metadata.ArtifactCollection == nil {
+		return ""
+	}
+	return metadata.ArtifactCollection.Status
 }
 
 func (h *TestHandler) latestCompletionMetrics(ctx context.Context, testID string) *model.AggregatedMetrics {
@@ -1254,19 +1264,36 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 
 	h.orch.StopPolling()
 
-	// Do NOT call StopAll here — let k6 finish naturally when its duration expires.
-	// The externally-controlled executor duration includes a configurable completion buffer.
-	// If we send {stopped: true} now, k6 writes empty handleSummary (0 VUs → 0 data).
-	// Instead, wait for k6 to exit on its own, which produces complete handleSummary.
-	h.logger.Info("waiting for k6 workers to finish naturally (duration buffer)", "test_id", testID)
+	// Let workers finish naturally so k6 can execute handleSummary and the worker-side
+	// watcher can upload artifacts before Docker restarts the container.
+	h.logger.Info("waiting for workers to finish naturally before collecting artifacts", "test_id", testID)
 
-	// Wait for k6 handleSummary files. k6 exits when its duration expires
-	// (up to the configured completion buffer after stages complete), then writes handleSummary and exits.
+	// Wait for k6 handleSummary files or uploaded artifacts. k6 exits when its duration
+	// or managed ramp completes, then writes handleSummary and the watcher can upload
+	// those files before the next worker process starts.
 	summaryResult := h.loadCompletionSummary(testID, finalMetrics, data.metadata)
 	rawSummary, summaryLoaded := summaryResult.Raw, summaryResult.Loaded
 	if data.metadata != nil {
 		data.metadata.ArtifactCollection = summaryResult.ArtifactCollection
 	}
+
+	if h.completionRegistry != nil && (data.metadata == nil || data.metadata.ArtifactCollection == nil || data.metadata.ArtifactCollection.Status != "complete") {
+		h.logger.Info("initial artifact collection incomplete, stopping workers and waiting for late uploads", "test_id", testID)
+		h.cleanupWorkersAfterCompletion(ctx)
+
+		followUp := h.loadCompletionSummary(testID, finalMetrics, data.metadata)
+		if followUp.Loaded || followUp.ArtifactCollection.ReceivedWorkerSummaryCount > summaryResult.ArtifactCollection.ReceivedWorkerSummaryCount {
+			summaryResult = followUp
+			rawSummary = followUp.Raw
+			summaryLoaded = followUp.Loaded
+			if data.metadata != nil {
+				data.metadata.ArtifactCollection = followUp.ArtifactCollection
+			}
+		}
+	} else {
+		h.cleanupWorkersAfterCompletion(ctx)
+	}
+
 	payloadArtifact := h.loadCompletionPayloadArtifact(testID)
 	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(testID, data.metadata)
 	if !summaryLoaded {
@@ -1280,8 +1307,6 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 		)
 	}
 
-	// Now stop workers to clean up (they may have already exited naturally)
-	h.cleanupWorkersAfterCompletion(ctx)
 	h.logCompletedTest(testID, finalMetrics, data)
 
 	if err := h.persistCompletedResult(ctx, testID, data, rawSummary, rawAuthSummary, payloadArtifact, authSummary); err != nil {

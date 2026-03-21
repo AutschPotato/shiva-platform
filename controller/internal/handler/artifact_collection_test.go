@@ -113,3 +113,26 @@ func TestArtifactCollectionGraceWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestSummaryCollectionFromRawAcceptsZeroDurationWhenMetricsExist(t *testing.T) {
+	finalMetrics := &model.AggregatedMetrics{}
+	raw := `--- worker1 ---
+{"metrics":{"http_req_duration":{"type":"trend","contains":"time","values":{"avg":10,"med":9,"p(90)":11,"p(95)":12,"p(99)":13,"min":1,"max":20}},"http_reqs":{"type":"counter","contains":"default","values":{"count":100}}},"state":{"testRunDurationMs":0}}
+
+--- worker2 ---
+{"metrics":{"http_req_duration":{"type":"trend","contains":"time","values":{"avg":20,"med":19,"p(90)":21,"p(95)":22,"p(99)":23,"min":2,"max":30}},"http_reqs":{"type":"counter","contains":"default","values":{"count":200}}},"state":{"testRunDurationMs":0}}`
+
+	result, err := summaryCollectionFromRaw([]string{"worker1", "worker2"}, raw, finalMetrics)
+	if err != nil {
+		t.Fatalf("expected zero-duration summaries with metrics to be accepted, got error: %v", err)
+	}
+	if !result.Loaded {
+		t.Fatalf("expected summary collection to load")
+	}
+	if result.ArtifactCollection == nil || result.ArtifactCollection.Status != "complete" {
+		t.Fatalf("expected complete artifact collection, got %#v", result.ArtifactCollection)
+	}
+	if finalMetrics.P99Latency <= 0 {
+		t.Fatalf("expected summary percentiles to be applied to final metrics")
+	}
+}
