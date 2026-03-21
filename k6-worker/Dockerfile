@@ -2,6 +2,8 @@ FROM grafana/k6:latest
 
 USER root
 
+RUN apk add --no-cache curl
+
 COPY k6-scripts/entrypoint.sh /usr/local/bin/shiva-k6-entrypoint.sh
 
 # Normalize Windows CRLF line endings inside the image so Docker Desktop

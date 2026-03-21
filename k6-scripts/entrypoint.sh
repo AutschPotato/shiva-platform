@@ -50,4 +50,52 @@ if [ -f "$CONFIG" ]; then
 fi
 
 CMD="$CMD $K6_ENV_FLAGS $SCRIPT"
-eval exec $CMD
+
+upload_artifact() {
+  artifact_type="$1"
+  file_path="$2"
+  content_type="$3"
+
+  if [ ! -f "$file_path" ]; then
+    return 0
+  fi
+
+  if [ ! -s "$file_path" ]; then
+    return 0
+  fi
+
+  if [ -z "${SHIVA_ARTIFACT_TEST_ID:-}" ] || [ -z "${WORKER_ID:-}" ] || [ -z "${SHIVA_ARTIFACT_UPLOAD_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  base_url="${SHIVA_ARTIFACT_UPLOAD_URL:-${CONTROLLER_URL:-http://controller:8080}}"
+  upload_url="${base_url%/}/api/internal/runs/${SHIVA_ARTIFACT_TEST_ID}/workers/${WORKER_ID}/${artifact_type}"
+
+  attempt=1
+  while [ "$attempt" -le 5 ]; do
+    if curl -fsS -X POST \
+      -H "X-Shiva-Artifact-Token: ${SHIVA_ARTIFACT_UPLOAD_TOKEN}" \
+      -H "Content-Type: ${content_type}" \
+      --data-binary "@${file_path}" \
+      "$upload_url" >/dev/null; then
+      return 0
+    fi
+    if [ "$attempt" -eq 5 ]; then
+      echo "failed to upload ${artifact_type} for ${WORKER_ID} after 5 attempts" >&2
+      return 1
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+}
+
+run_exit=0
+eval "$CMD" || run_exit=$?
+
+if [ "${SHIVA_ARTIFACT_UPLOAD_ENABLED:-}" = "true" ] || [ "${SHIVA_ARTIFACT_UPLOAD_ENABLED:-}" = "1" ]; then
+  upload_artifact "summary" "/output/summary-${WORKER_ID}.json" "application/json" || true
+  upload_artifact "auth-summary" "/output/auth-summary-${WORKER_ID}.json" "application/json" || true
+  upload_artifact "payload" "/output/payload-${WORKER_ID}.json" "application/json" || true
+fi
+
+exit "$run_exit"
