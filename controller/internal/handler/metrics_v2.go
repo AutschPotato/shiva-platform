@@ -242,6 +242,24 @@ func buildMetricsV2(legacy *model.AggregatedMetrics, rawSummary string, metadata
 		quality = upsertMetricQuality(quality, metricQuality("checks", "unavailable", "summary_content", "global", "No parsed handleSummary artifact was available for check aggregation."))
 	}
 
+	if metadata != nil && metadata.ArtifactCollection != nil {
+		collection := metadata.ArtifactCollection
+		flagStatus := "exact"
+		switch collection.Status {
+		case "partial":
+			flagStatus = "partial"
+		case "missing":
+			flagStatus = "unavailable"
+		}
+		quality = upsertMetricQuality(quality, metricQuality(
+			"worker_artifacts",
+			flagStatus,
+			"summary_artifact_collection",
+			"per_worker",
+			artifactCollectionReason(collection),
+		))
+	}
+
 	result.QualityFlags = quality
 	return result
 }

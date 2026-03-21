@@ -607,6 +607,17 @@ func (o *Orchestrator) WorkerCount() int {
 	return len(o.workers)
 }
 
+func (o *Orchestrator) WorkerNames() []string {
+	names := make([]string, 0, len(o.workers))
+	for _, worker := range o.workers {
+		if worker == nil {
+			continue
+		}
+		names = append(names, worker.Name())
+	}
+	return names
+}
+
 func (o *Orchestrator) FindWorker(nameOrAddress string) *Worker {
 	for _, w := range o.workers {
 		if w == nil {

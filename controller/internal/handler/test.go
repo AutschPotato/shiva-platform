@@ -37,6 +37,12 @@ type completionData struct {
 	warnings   []model.ConflictWarning
 }
 
+type summaryCollectionResult struct {
+	Raw                string
+	Loaded             bool
+	ArtifactCollection *model.ArtifactCollectionMetadata
+}
+
 type executionPreparation struct {
 	scriptContent    string
 	configContent    string
@@ -372,12 +378,108 @@ func (h *TestHandler) takePendingMeta(testID string) (*model.TestMetadata, []mod
 	return pm.Meta, pm.Warnings
 }
 
-func newTestMetadata(startTime, endTime time.Time, workerCount int) *model.TestMetadata {
+func newTestMetadata(startTime, endTime time.Time, workerNames []string) *model.TestMetadata {
+	missingWorkers := make([]string, 0, len(workerNames))
+	for _, name := range workerNames {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		missingWorkers = append(missingWorkers, name)
+	}
+
 	return &model.TestMetadata{
 		StartedAt:   startTime,
 		EndedAt:     endTime,
 		DurationS:   endTime.Sub(startTime).Seconds(),
-		WorkerCount: workerCount,
+		WorkerCount: len(workerNames),
+		ArtifactCollection: &model.ArtifactCollectionMetadata{
+			Status:                     "missing",
+			ExpectedWorkerCount:        len(workerNames),
+			ReceivedWorkerSummaryCount: 0,
+			MissingWorkers:             missingWorkers,
+		},
+	}
+}
+
+func artifactCollectionReason(collection *model.ArtifactCollectionMetadata) string {
+	if collection == nil {
+		return ""
+	}
+
+	switch collection.Status {
+	case "complete":
+		return fmt.Sprintf(
+			"Received worker summaries for all %d expected workers.",
+			collection.ExpectedWorkerCount,
+		)
+	case "partial":
+		reason := fmt.Sprintf(
+			"Received %d of %d expected worker summaries.",
+			collection.ReceivedWorkerSummaryCount,
+			collection.ExpectedWorkerCount,
+		)
+		if len(collection.MissingWorkers) > 0 {
+			reason += " Missing workers: " + strings.Join(collection.MissingWorkers, ", ") + "."
+		}
+		return reason
+	case "missing":
+		if collection.ExpectedWorkerCount > 0 {
+			return fmt.Sprintf("No worker summary artifacts were collected for %d expected workers.", collection.ExpectedWorkerCount)
+		}
+		return "No worker summary artifacts were collected before result persistence."
+	default:
+		return ""
+	}
+}
+
+func classifyArtifactCollection(expectedWorkers []string, merged *scriptgen.MergedSummaryMetrics) *model.ArtifactCollectionMetadata {
+	receivedNames := make(map[string]struct{}, len(expectedWorkers))
+	receivedCount := 0
+	if merged != nil {
+		receivedCount = len(merged.Workers)
+		for _, worker := range merged.Workers {
+			name := strings.TrimSpace(worker.Name)
+			if name == "" {
+				continue
+			}
+			receivedNames[name] = struct{}{}
+		}
+	}
+
+	expectedCount := len(expectedWorkers)
+	if expectedCount == 0 && merged != nil {
+		expectedCount = merged.RawWorkerCount
+	}
+
+	missingWorkers := make([]string, 0, expectedCount)
+	for _, worker := range expectedWorkers {
+		worker = strings.TrimSpace(worker)
+		if worker == "" {
+			continue
+		}
+		if _, ok := receivedNames[worker]; ok {
+			continue
+		}
+		missingWorkers = append(missingWorkers, worker)
+	}
+
+	status := "missing"
+	switch {
+	case expectedCount == 0 && receivedCount > 0:
+		status = "complete"
+	case receivedCount <= 0:
+		status = "missing"
+	case expectedCount > 0 && receivedCount >= expectedCount && len(missingWorkers) == 0:
+		status = "complete"
+	default:
+		status = "partial"
+	}
+
+	return &model.ArtifactCollectionMetadata{
+		Status:                     status,
+		ExpectedWorkerCount:        expectedCount,
+		ReceivedWorkerSummaryCount: receivedCount,
+		MissingWorkers:             missingWorkers,
 	}
 }
 
@@ -412,7 +514,7 @@ func (h *TestHandler) buildCompletionData(testID string, finalMetrics *model.Agg
 	h.orch.ApplyPeakVUs(finalMetrics)
 	timeSeries := h.orch.GetTimeSeries()
 	startTime := h.orch.GetTestStartTime()
-	metadata := newTestMetadata(startTime, endTime, h.orch.WorkerCount())
+	metadata := newTestMetadata(startTime, endTime, h.orch.WorkerNames())
 	warnings := h.mergePendingMeta(testID, metadata)
 
 	return completionData{
@@ -733,42 +835,99 @@ func applySummaryPercentiles(finalMetrics *model.AggregatedMetrics, percentiles 
 	}
 }
 
-func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.AggregatedMetrics) (string, bool) {
+func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.AggregatedMetrics, metadata *model.TestMetadata) summaryCollectionResult {
 	const (
 		summaryRetryCount = 45
 		summaryRetryDelay = 1 * time.Second
 	)
+
+	expectedWorkers := []string(nil)
+	if metadata != nil && metadata.ArtifactCollection != nil && len(metadata.ArtifactCollection.MissingWorkers) > 0 {
+		expectedWorkers = append(expectedWorkers, metadata.ArtifactCollection.MissingWorkers...)
+	}
+
+	best := summaryCollectionResult{
+		ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+	}
 
 	for attempt := 0; attempt < summaryRetryCount; attempt++ {
 		if attempt > 0 {
 			time.Sleep(summaryRetryDelay)
 		}
 
-		percentiles, err := scriptgen.ReadAndMergeSummaries(h.outputDir)
-		if err != nil {
-			h.logger.Debug("summary files not ready yet", "attempt", attempt+1, "error", err)
+		raw := scriptgen.ReadRawSummaries(h.outputDir)
+		if strings.TrimSpace(raw) == "" {
+			h.logger.Debug("summary files not ready yet", "attempt", attempt+1)
 			continue
 		}
 
-		raw := scriptgen.ReadRawSummaries(h.outputDir)
 		if strings.Contains(raw, `"testRunDurationMs":0`) {
 			h.logger.Debug("summary files contain empty data, waiting for real data", "attempt", attempt+1)
+			continue
+		}
+
+		mergedSummary, err := scriptgen.ParseRawSummaryContent(raw)
+		if err != nil {
+			h.logger.Debug("summary files not parseable yet", "attempt", attempt+1, "error", err)
+			continue
+		}
+
+		collection := classifyArtifactCollection(expectedWorkers, mergedSummary)
+		if collection.ReceivedWorkerSummaryCount > best.ArtifactCollection.ReceivedWorkerSummaryCount {
+			best = summaryCollectionResult{
+				Raw:                raw,
+				Loaded:             true,
+				ArtifactCollection: collection,
+			}
+		}
+
+		applySummaryPercentiles(finalMetrics, &scriptgen.SummaryPercentiles{
+			P90: mergedSummary.TotalLatency.P90,
+			P95: mergedSummary.TotalLatency.P95,
+			P99: mergedSummary.TotalLatency.P99,
+		})
+
+		if collection.Status != "complete" {
+			h.logger.Debug("worker summaries incomplete, waiting for remaining artifacts",
+				"test_id", testID,
+				"attempt", attempt+1,
+				"received", collection.ReceivedWorkerSummaryCount,
+				"expected", collection.ExpectedWorkerCount,
+				"missing_workers", strings.Join(collection.MissingWorkers, ","),
+			)
 			continue
 		}
 
 		h.logger.Info("summary percentiles loaded",
 			"test_id", testID,
 			"attempt", attempt+1,
-			"p90", percentiles.P90,
-			"p95", percentiles.P95,
-			"p99", percentiles.P99,
+			"p90", mergedSummary.TotalLatency.P90,
+			"p95", mergedSummary.TotalLatency.P95,
+			"p99", mergedSummary.TotalLatency.P99,
+			"received_workers", collection.ReceivedWorkerSummaryCount,
+			"expected_workers", collection.ExpectedWorkerCount,
 		)
 
-		applySummaryPercentiles(finalMetrics, percentiles)
-		return raw, true
+		return summaryCollectionResult{
+			Raw:                raw,
+			Loaded:             true,
+			ArtifactCollection: collection,
+		}
 	}
 
-	return "", false
+	if best.Loaded {
+		h.logger.Warn("persisting partial worker summary artifacts after retries",
+			"test_id", testID,
+			"received_workers", best.ArtifactCollection.ReceivedWorkerSummaryCount,
+			"expected_workers", best.ArtifactCollection.ExpectedWorkerCount,
+			"missing_workers", strings.Join(best.ArtifactCollection.MissingWorkers, ","),
+		)
+		return best
+	}
+
+	return summaryCollectionResult{
+		ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+	}
 }
 
 func (h *TestHandler) loadCompletionPayloadArtifact() string {
@@ -949,11 +1108,22 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 
 	// Wait for k6 handleSummary files. k6 exits when its duration expires
 	// (up to the configured completion buffer after stages complete), then writes handleSummary and exits.
-	rawSummary, summaryLoaded := h.loadCompletionSummary(testID, finalMetrics)
+	summaryResult := h.loadCompletionSummary(testID, finalMetrics, data.metadata)
+	rawSummary, summaryLoaded := summaryResult.Raw, summaryResult.Loaded
+	if data.metadata != nil {
+		data.metadata.ArtifactCollection = summaryResult.ArtifactCollection
+	}
 	payloadArtifact := h.loadCompletionPayloadArtifact()
 	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(data.metadata)
 	if !summaryLoaded {
-		h.logger.Warn("could not read summary files after retries, P99 will be 0", "test_id", testID)
+		status := ""
+		if data.metadata != nil && data.metadata.ArtifactCollection != nil {
+			status = data.metadata.ArtifactCollection.Status
+		}
+		h.logger.Warn("could not read summary files after retries, worker drilldown will be incomplete",
+			"test_id", testID,
+			"artifact_collection_status", status,
+		)
 	}
 
 	// Now stop workers to clean up (they may have already exited naturally)

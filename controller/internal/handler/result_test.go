@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
@@ -89,5 +90,49 @@ func TestBuildResultResponseOmitsExecutionFieldsWhenOnlyDefaultsExist(t *testing
 		if _, ok := resp[key]; ok {
 			t.Fatalf("expected %s to be omitted for non-builder/default-only result payload", key)
 		}
+	}
+}
+
+func TestBuildResultResponseIncludesArtifactCollectionMetadata(t *testing.T) {
+	resultJSON, err := json.Marshal(model.TestResult{
+		Metadata: &model.TestMetadata{
+			WorkerCount: 3,
+			ArtifactCollection: &model.ArtifactCollectionMetadata{
+				Status:                     "partial",
+				ExpectedWorkerCount:        3,
+				ReceivedWorkerSummaryCount: 2,
+				MissingWorkers:             []string{"worker3"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal result json: %v", err)
+	}
+
+	resp := buildResultResponse(&model.LoadTest{
+		ID:          "result-3",
+		ProjectName: "partial-worker-artifacts",
+		Status:      "completed",
+		UserID:      9,
+		Username:    "admin",
+		ResultJSON:  resultJSON,
+	})
+
+	metadataValue, ok := resp["metadata"]
+	if !ok {
+		t.Fatalf("expected metadata in result response")
+	}
+	metadata, ok := metadataValue.(*model.TestMetadata)
+	if !ok {
+		t.Fatalf("expected metadata to stay typed, got %T", metadataValue)
+	}
+	if metadata.ArtifactCollection == nil {
+		t.Fatalf("expected artifact collection metadata")
+	}
+	if metadata.ArtifactCollection.Status != "partial" {
+		t.Fatalf("expected partial artifact collection status, got %q", metadata.ArtifactCollection.Status)
+	}
+	if len(metadata.ArtifactCollection.MissingWorkers) != 1 || metadata.ArtifactCollection.MissingWorkers[0] != "worker3" {
+		t.Fatalf("expected worker3 to be missing, got %#v", metadata.ArtifactCollection.MissingWorkers)
 	}
 }
