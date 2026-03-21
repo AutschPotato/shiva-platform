@@ -172,14 +172,13 @@ services:
       context: .
       dockerfile: ./k6-worker/Dockerfile
     networks: [loadtest-net]
-    volumes: &worker-volumes
-      - ./k6-scripts:/scripts:ro
-      - k6-output:/output
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker1"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -191,12 +190,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker2"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -208,12 +208,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker3"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -225,12 +226,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker4"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -242,12 +244,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker5"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -259,12 +262,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker6"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -276,12 +280,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker7"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -293,12 +298,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker8"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -310,12 +316,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker9"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"
@@ -327,12 +334,13 @@ services:
     <<: *default-logging
     image: shiva-platform-k6-worker:latest
     networks: [loadtest-net]
-    volumes: *worker-volumes
     command: []
     restart: unless-stopped
     environment:
       TARGET_URL: "http://target-lb:8090"
       WORKER_ID: "worker10"
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "true"
+      CONTROLLER_URL: "http://controller:8080"
       K6_WEB_DASHBOARD: "true"
       K6_WEB_DASHBOARD_HOST: "0.0.0.0"
       K6_WEB_DASHBOARD_PORT: "5665"

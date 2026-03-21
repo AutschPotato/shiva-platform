@@ -1,0 +1,34 @@
+services:
+  worker1: &shared-worker
+    environment:
+      SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER: "false"
+    volumes:
+      - ./k6-scripts:/scripts:ro
+      - k6-output:/output
+
+  worker2:
+    <<: *shared-worker
+
+  worker3:
+    <<: *shared-worker
+
+  worker4:
+    <<: *shared-worker
+
+  worker5:
+    <<: *shared-worker
+
+  worker6:
+    <<: *shared-worker
+
+  worker7:
+    <<: *shared-worker
+
+  worker8:
+    <<: *shared-worker
+
+  worker9:
+    <<: *shared-worker
+
+  worker10:
+    <<: *shared-worker

@@ -494,6 +494,36 @@ func classifyArtifactCollection(expectedWorkers []string, merged *scriptgen.Merg
 	}
 }
 
+func artifactCollectionGraceWindow(metadata *model.TestMetadata) time.Duration {
+	const (
+		minGrace = 10 * time.Second
+		maxGrace = 90 * time.Second
+	)
+
+	if metadata == nil {
+		return minGrace
+	}
+
+	durationBased := time.Duration(metadata.DurationS * 0.15 * float64(time.Second))
+	workerBonus := time.Duration(min(metadata.WorkerCount, 10)) * time.Second
+	grace := durationBased + workerBonus
+
+	if grace < minGrace {
+		return minGrace
+	}
+	if grace > maxGrace {
+		return maxGrace
+	}
+	return grace
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func expectedWorkersFromMetadata(metadata *model.TestMetadata) []string {
 	if metadata == nil || metadata.ArtifactCollection == nil {
 		return nil
@@ -934,20 +964,25 @@ func applySummaryPercentiles(finalMetrics *model.AggregatedMetrics, percentiles 
 }
 
 func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.AggregatedMetrics, metadata *model.TestMetadata) summaryCollectionResult {
-	const (
-		summaryRetryCount = 45
-		summaryRetryDelay = 1 * time.Second
-	)
+	const summaryPollDelay = 1 * time.Second
 
 	expectedWorkers := expectedWorkersFromMetadata(metadata)
+	graceWindow := artifactCollectionGraceWindow(metadata)
+	deadline := time.Now().Add(graceWindow)
 
 	best := summaryCollectionResult{
 		ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
 	}
 
-	for attempt := 0; attempt < summaryRetryCount; attempt++ {
+	h.logger.Info("collecting completion artifacts with adaptive grace window",
+		"test_id", testID,
+		"grace_window_sec", int(graceWindow.Seconds()),
+		"expected_workers", len(expectedWorkers),
+	)
+
+	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
-			time.Sleep(summaryRetryDelay)
+			time.Sleep(summaryPollDelay)
 		}
 
 		uploadedResult := h.loadUploadedSummary(testID, finalMetrics, metadata)
@@ -967,45 +1002,46 @@ func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.A
 		}
 
 		raw := scriptgen.ReadRawSummaries(h.outputDir)
-		if strings.TrimSpace(raw) == "" {
+		if strings.TrimSpace(raw) != "" {
+			fileResult, err := summaryCollectionFromRaw(expectedWorkers, raw, finalMetrics)
+			if err != nil {
+				h.logger.Debug("summary files not parseable yet", "attempt", attempt+1, "error", err)
+			} else {
+				if fileResult.ArtifactCollection.ReceivedWorkerSummaryCount > best.ArtifactCollection.ReceivedWorkerSummaryCount {
+					best = fileResult
+				}
+
+				if fileResult.ArtifactCollection.Status == "complete" {
+					h.logger.Info("summary percentiles loaded",
+						"test_id", testID,
+						"attempt", attempt+1,
+						"received_workers", fileResult.ArtifactCollection.ReceivedWorkerSummaryCount,
+						"expected_workers", fileResult.ArtifactCollection.ExpectedWorkerCount,
+					)
+					return fileResult
+				}
+
+				h.logger.Debug("worker summaries incomplete, waiting for remaining artifacts",
+					"test_id", testID,
+					"attempt", attempt+1,
+					"received", fileResult.ArtifactCollection.ReceivedWorkerSummaryCount,
+					"expected", fileResult.ArtifactCollection.ExpectedWorkerCount,
+					"missing_workers", strings.Join(fileResult.ArtifactCollection.MissingWorkers, ","),
+				)
+			}
+		} else {
 			h.logger.Debug("summary files not ready yet", "attempt", attempt+1)
-			continue
 		}
 
-		fileResult, err := summaryCollectionFromRaw(expectedWorkers, raw, finalMetrics)
-		if err != nil {
-			h.logger.Debug("summary files not parseable yet", "attempt", attempt+1, "error", err)
-			continue
+		if time.Now().After(deadline) {
+			break
 		}
-
-		if fileResult.ArtifactCollection.ReceivedWorkerSummaryCount > best.ArtifactCollection.ReceivedWorkerSummaryCount {
-			best = fileResult
-		}
-
-		if fileResult.ArtifactCollection.Status != "complete" {
-			h.logger.Debug("worker summaries incomplete, waiting for remaining artifacts",
-				"test_id", testID,
-				"attempt", attempt+1,
-				"received", fileResult.ArtifactCollection.ReceivedWorkerSummaryCount,
-				"expected", fileResult.ArtifactCollection.ExpectedWorkerCount,
-				"missing_workers", strings.Join(fileResult.ArtifactCollection.MissingWorkers, ","),
-			)
-			continue
-		}
-
-		h.logger.Info("summary percentiles loaded",
-			"test_id", testID,
-			"attempt", attempt+1,
-			"received_workers", fileResult.ArtifactCollection.ReceivedWorkerSummaryCount,
-			"expected_workers", fileResult.ArtifactCollection.ExpectedWorkerCount,
-		)
-
-		return fileResult
 	}
 
 	if best.Loaded {
 		h.logger.Warn("persisting partial worker summary artifacts after retries",
 			"test_id", testID,
+			"grace_window_sec", int(graceWindow.Seconds()),
 			"received_workers", best.ArtifactCollection.ReceivedWorkerSummaryCount,
 			"expected_workers", best.ArtifactCollection.ExpectedWorkerCount,
 			"missing_workers", strings.Join(best.ArtifactCollection.MissingWorkers, ","),

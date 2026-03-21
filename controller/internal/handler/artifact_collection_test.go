@@ -2,7 +2,9 @@ package handler
 
 import (
 	"testing"
+	"time"
 
+	"github.com/shiva-load-testing/controller/internal/model"
 	"github.com/shiva-load-testing/controller/internal/scriptgen"
 )
 
@@ -63,5 +65,51 @@ func TestClassifyArtifactCollectionMissing(t *testing.T) {
 	}
 	if len(collection.MissingWorkers) != 2 {
 		t.Fatalf("expected all workers missing, got %#v", collection.MissingWorkers)
+	}
+}
+
+func TestArtifactCollectionGraceWindow(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata *model.TestMetadata
+		want     time.Duration
+	}{
+		{
+			name:     "nil metadata uses minimum",
+			metadata: nil,
+			want:     10 * time.Second,
+		},
+		{
+			name: "short run still uses minimum",
+			metadata: &model.TestMetadata{
+				DurationS:   20,
+				WorkerCount: 2,
+			},
+			want: 10 * time.Second,
+		},
+		{
+			name: "medium run adds worker bonus",
+			metadata: &model.TestMetadata{
+				DurationS:   120,
+				WorkerCount: 4,
+			},
+			want: 22 * time.Second,
+		},
+		{
+			name: "long run is capped",
+			metadata: &model.TestMetadata{
+				DurationS:   1200,
+				WorkerCount: 20,
+			},
+			want: 90 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := artifactCollectionGraceWindow(tt.metadata); got != tt.want {
+				t.Fatalf("expected grace window %s, got %s", tt.want, got)
+			}
+		})
 	}
 }

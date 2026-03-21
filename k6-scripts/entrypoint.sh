@@ -23,6 +23,8 @@ if [ "${SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER:-}" = "true" ] || [ "${SHIVA_FETCH_S
 fi
 # --- End fetch ---
 
+mkdir -p /output
+
 SCRIPT="/scripts/current-test.js"
 CONFIG="/scripts/config.json"
 ENV_FILE="/scripts/k6-env.sh"
