@@ -107,6 +107,21 @@ func TestHandleHTTPScenarioReturnsRequestedStatus(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if payload["scenario"] != "404" {
+		t.Fatalf("expected scenario marker 404, got %v", payload["scenario"])
+	}
+	if payload["code"] != float64(http.StatusNotFound) {
+		t.Fatalf("expected code field %d, got %v", http.StatusNotFound, payload["code"])
+	}
+	if payload["method"] != http.MethodGet {
+		t.Fatalf("expected method marker %s, got %v", http.MethodGet, payload["method"])
+	}
 }
 
 func TestHandleHTTPScenarioReturnsRequestedStatusForPost(t *testing.T) {
@@ -121,6 +136,82 @@ func TestHandleHTTPScenarioReturnsRequestedStatusForPost(t *testing.T) {
 	}
 }
 
+func TestHandleHTTPScenarioSupportsAllConfiguredMethods(t *testing.T) {
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	for _, method := range methods {
+		method := method
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/test/http/404", strings.NewReader(`{"hello":"world"}`))
+			req.SetPathValue("scenario", "404")
+
+			rec := httptest.NewRecorder()
+			handleHTTPScenario(rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("expected 404 for method %s, got %d", method, rec.Code)
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("failed to decode response payload for method %s: %v", method, err)
+			}
+
+			if payload["method"] != method {
+				t.Fatalf("expected method marker %s, got %v", method, payload["method"])
+			}
+		})
+	}
+}
+
+func TestHandleHTTPScenarioRejectsInvalidScenarioValue(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/test/http/not-a-code", nil)
+	req.SetPathValue("scenario", "not-a-code")
+
+	rec := httptest.NewRecorder()
+	handleHTTPScenario(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid scenario, got %d", rec.Code)
+	}
+}
+
+func TestHandleHTTPScenarioSetsRedirectLocationFor3xx(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/test/http/302", nil)
+	req.SetPathValue("scenario", "302")
+
+	rec := httptest.NewRecorder()
+	handleHTTPScenario(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/api/products" {
+		t.Fatalf("expected Location header /api/products, got %q", got)
+	}
+}
+
+func TestHandleHTTPScenarioHonorsAuthRequirement(t *testing.T) {
+	previousCfg := cfg
+	t.Cleanup(func() { cfg = previousCfg })
+
+	cfg = Config{
+		RequireAuth:   true,
+		AuthJWTSecret: "dummy-jwt-secret",
+		AuthIssuer:    "dummy-service",
+		AuthTokenTTL:  60 * time.Second,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/test/http/404", nil)
+	req.SetPathValue("scenario", "404")
+
+	rec := httptest.NewRecorder()
+	handleHTTPScenario(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when auth is required and Authorization header is missing, got %d", rec.Code)
+	}
+}
+
 func TestHandleTokenScenarioReturnsRequestedStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/token/503", nil)
 	req.SetPathValue("scenario", "503")
@@ -130,6 +221,18 @@ func TestHandleTokenScenarioReturnsRequestedStatus(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleTokenScenarioReturnsRequestedStatus404(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/token/404", nil)
+	req.SetPathValue("scenario", "404")
+
+	rec := httptest.NewRecorder()
+	handleTokenScenario(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 

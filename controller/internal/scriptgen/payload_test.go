@@ -152,6 +152,46 @@ func TestGenerateFromBuilderIncludesAuthFlow(t *testing.T) {
 	}
 }
 
+func TestGenerateFromBuilderClassifiesBusinessStatusAndTransportFailures(t *testing.T) {
+	req := &model.TestRequest{
+		URL:      "https://api.example.com/test/http/404",
+		Executor: "constant-arrival-rate",
+		Rate:     50,
+		TimeUnit: "1s",
+		Duration: "30s",
+	}
+
+	result, err := GenerateFromBuilder(req, 2)
+	if err != nil {
+		t.Fatalf("expected generated script, got error: %v", err)
+	}
+
+	if !strings.Contains(result.Script, `'status is 2xx': (r) => r.status >= 200 && r.status < 300,`) {
+		t.Fatalf("expected generated script to classify 2xx responses as business success")
+	}
+	if !strings.Contains(result.Script, `businessTransportFailures.add(1);`) {
+		t.Fatalf("expected generated script to classify transport errors explicitly")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 400 && res.status < 500) businessStatus4xx.add(1);`) {
+		t.Fatalf("expected generated script to track 4xx business statuses")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 500) businessStatus5xx.add(1);`) {
+		t.Fatalf("expected generated script to track 5xx business statuses")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 400 && res.status < 500) status4xx.add(1);`) {
+		t.Fatalf("expected generated script to track 4xx status counter")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 500) status5xx.add(1);`) {
+		t.Fatalf("expected generated script to track 5xx status counter")
+	}
+	if !strings.Contains(result.Script, `businessHttpFailure.add(1);`) {
+		t.Fatalf("expected generated script to increment business failure counter for non-2xx responses")
+	}
+	if !strings.Contains(result.Script, `if (!res || res.error) {`) {
+		t.Fatalf("expected generated script to keep explicit transport error branch")
+	}
+}
+
 func TestBuildBuilderConfigIncludesVisibleRuntimeContract(t *testing.T) {
 	req := &model.TestRequest{
 		URL:              "https://api.example.com/orders",

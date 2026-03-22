@@ -1,6 +1,7 @@
 package completion
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -134,6 +135,18 @@ func (r *Registry) StoreArtifact(testID, workerID, uploadToken string, artifactT
 		return fmt.Errorf("%w: %s", ErrUnknownArtifact, artifactType)
 	}
 
+	if artifactType == ArtifactAuthSummary {
+		if existing, ok := run.artifacts[artifactType][workerID]; ok {
+			existingSignal := authSummarySignal(existing.Content)
+			newSignal := authSummarySignal(string(content))
+			if newSignal <= existingSignal {
+				// Keep the stronger (or equally strong) auth artifact to avoid late
+				// no-op uploads from restarted workers erasing abort diagnostics.
+				return nil
+			}
+		}
+	}
+
 	run.artifacts[artifactType][workerID] = Artifact{
 		WorkerID:    workerID,
 		Content:     string(content),
@@ -141,6 +154,60 @@ func (r *Registry) StoreArtifact(testID, workerID, uploadToken string, artifactT
 		ReceivedAt:  time.Now(),
 	}
 	return nil
+}
+
+type authSummarySnapshot struct {
+	Status  string `json:"status"`
+	Metrics struct {
+		TokenRequestsTotal  float64 `json:"token_requests_total"`
+		TokenFailureTotal   float64 `json:"token_failure_total"`
+		ResponseStatusCodes []struct {
+			Code  int     `json:"code"`
+			Count float64 `json:"count"`
+		} `json:"response_status_codes"`
+		AbortTriggered bool   `json:"abort_triggered"`
+		AbortCause     string `json:"abort_cause"`
+		AbortReason    string `json:"abort_reason"`
+	} `json:"metrics"`
+}
+
+func authSummarySignal(content string) int {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return 0
+	}
+
+	var snapshot authSummarySnapshot
+	if err := json.Unmarshal([]byte(trimmed), &snapshot); err != nil {
+		// Keep malformed payloads at the lowest non-zero signal so a later valid
+		// auth summary can replace them.
+		return 1
+	}
+
+	signal := 1
+	if strings.TrimSpace(snapshot.Status) != "" {
+		signal += 1
+	}
+	if snapshot.Metrics.TokenRequestsTotal > 0 {
+		signal += 10
+	}
+	if snapshot.Metrics.TokenFailureTotal > 0 {
+		signal += 10
+	}
+	if len(snapshot.Metrics.ResponseStatusCodes) > 0 {
+		signal += 5
+	}
+	if snapshot.Metrics.AbortTriggered {
+		signal += 100
+	}
+	if strings.TrimSpace(snapshot.Metrics.AbortCause) != "" {
+		signal += 5
+	}
+	if strings.TrimSpace(snapshot.Metrics.AbortReason) != "" {
+		signal += 5
+	}
+
+	return signal
 }
 
 func (r *Registry) Snapshot(testID string) (Snapshot, bool) {

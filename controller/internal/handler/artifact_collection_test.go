@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shiva-load-testing/controller/internal/completion"
 	"github.com/shiva-load-testing/controller/internal/model"
 	"github.com/shiva-load-testing/controller/internal/scriptgen"
 )
@@ -114,6 +115,43 @@ func TestArtifactCollectionGraceWindow(t *testing.T) {
 	}
 }
 
+func TestArtifactCollectionDeadlines(t *testing.T) {
+	now := time.Date(2026, time.March, 22, 12, 0, 0, 0, time.UTC)
+
+	t.Run("reserves follow-up time when window allows", func(t *testing.T) {
+		initial, final := artifactCollectionDeadlines(now, 20*time.Second, 5*time.Second, true)
+
+		if got, want := initial, now.Add(15*time.Second); !got.Equal(want) {
+			t.Fatalf("expected initial deadline %s, got %s", want, got)
+		}
+		if got, want := final, now.Add(20*time.Second); !got.Equal(want) {
+			t.Fatalf("expected final deadline %s, got %s", want, got)
+		}
+	})
+
+	t.Run("does not reserve when window is too short", func(t *testing.T) {
+		initial, final := artifactCollectionDeadlines(now, 4*time.Second, 5*time.Second, true)
+
+		if got, want := initial, now.Add(4*time.Second); !got.Equal(want) {
+			t.Fatalf("expected initial deadline %s, got %s", want, got)
+		}
+		if got, want := final, now.Add(4*time.Second); !got.Equal(want) {
+			t.Fatalf("expected final deadline %s, got %s", want, got)
+		}
+	})
+
+	t.Run("keeps single deadline when follow-up reserve disabled", func(t *testing.T) {
+		initial, final := artifactCollectionDeadlines(now, 20*time.Second, 5*time.Second, false)
+
+		if got, want := initial, now.Add(20*time.Second); !got.Equal(want) {
+			t.Fatalf("expected initial deadline %s, got %s", want, got)
+		}
+		if got, want := final, now.Add(20*time.Second); !got.Equal(want) {
+			t.Fatalf("expected final deadline %s, got %s", want, got)
+		}
+	})
+}
+
 func TestSummaryCollectionFromRawAcceptsZeroDurationWhenMetricsExist(t *testing.T) {
 	finalMetrics := &model.AggregatedMetrics{}
 	raw := `--- worker1 ---
@@ -134,5 +172,46 @@ func TestSummaryCollectionFromRawAcceptsZeroDurationWhenMetricsExist(t *testing.
 	}
 	if finalMetrics.P99Latency <= 0 {
 		t.Fatalf("expected summary percentiles to be applied to final metrics")
+	}
+}
+
+func TestLoadUploadedSummaryUsesProvidedExpectedWorkers(t *testing.T) {
+	const (
+		testID = "test-uploaded-summary-expected-workers"
+		token  = "upload-token"
+	)
+
+	registry := completion.NewRegistry()
+	// Registry knows only 2 workers for this run.
+	registry.RegisterRun(testID, []string{"worker1", "worker2"}, token)
+
+	workerSummary := `{"metrics":{"http_req_duration":{"type":"trend","contains":"time","values":{"avg":10,"med":9,"p(90)":11,"p(95)":12,"p(99)":13,"min":1,"max":20}},"http_reqs":{"type":"counter","contains":"default","values":{"count":100}}},"state":{"testRunDurationMs":1000}}`
+	if err := registry.StoreArtifact(testID, "worker1", token, completion.ArtifactSummary, "application/json", []byte(workerSummary)); err != nil {
+		t.Fatalf("store worker1 summary: %v", err)
+	}
+	if err := registry.StoreArtifact(testID, "worker2", token, completion.ArtifactSummary, "application/json", []byte(workerSummary)); err != nil {
+		t.Fatalf("store worker2 summary: %v", err)
+	}
+
+	handler := &TestHandler{completionRegistry: registry}
+	result := handler.loadUploadedSummary(testID, &model.AggregatedMetrics{}, []string{"worker1", "worker2", "worker3"})
+
+	if !result.Loaded {
+		t.Fatalf("expected uploaded summary to be loaded")
+	}
+	if result.ArtifactCollection == nil {
+		t.Fatalf("expected artifact collection metadata")
+	}
+	if result.ArtifactCollection.ExpectedWorkerCount != 3 {
+		t.Fatalf("expected worker count to follow provided expected set (3), got %d", result.ArtifactCollection.ExpectedWorkerCount)
+	}
+	if result.ArtifactCollection.ReceivedWorkerSummaryCount != 2 {
+		t.Fatalf("expected received worker count 2, got %d", result.ArtifactCollection.ReceivedWorkerSummaryCount)
+	}
+	if result.ArtifactCollection.Status != "partial" {
+		t.Fatalf("expected partial status, got %q", result.ArtifactCollection.Status)
+	}
+	if len(result.ArtifactCollection.MissingWorkers) != 1 || result.ArtifactCollection.MissingWorkers[0] != "worker3" {
+		t.Fatalf("expected worker3 to remain missing, got %#v", result.ArtifactCollection.MissingWorkers)
 	}
 }

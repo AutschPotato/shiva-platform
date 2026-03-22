@@ -517,21 +517,22 @@ func artifactCollectionGraceWindow(metadata *model.TestMetadata) time.Duration {
 	return grace
 }
 
+func artifactCollectionDeadlines(now time.Time, window time.Duration, followUpReserve time.Duration, reserveForFollowUp bool) (time.Time, time.Time) {
+	finalDeadline := now.Add(window)
+	initialDeadline := finalDeadline
+
+	if reserveForFollowUp && followUpReserve > 0 && window > followUpReserve {
+		initialDeadline = finalDeadline.Add(-followUpReserve)
+	}
+
+	return initialDeadline, finalDeadline
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
-}
-
-func expectedWorkersFromMetadata(metadata *model.TestMetadata) []string {
-	if metadata == nil || metadata.ArtifactCollection == nil {
-		return nil
-	}
-	if len(metadata.ArtifactCollection.MissingWorkers) > 0 {
-		return append([]string(nil), metadata.ArtifactCollection.MissingWorkers...)
-	}
-	return nil
 }
 
 func summaryCollectionFromRaw(expectedWorkers []string, raw string, finalMetrics *model.AggregatedMetrics) (summaryCollectionResult, error) {
@@ -573,6 +574,9 @@ func (h *TestHandler) configureArtifactUploads(testID string, prepared *executio
 	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_URL"] = strings.TrimRight(h.internalControllerURL, "/")
 	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_TOKEN"] = uploadToken
 	prepared.envVars["SHIVA_ARTIFACT_TEST_ID"] = testID
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_POST_RUN_GRACE_S"] = "5"
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_SETTLE_WINDOW_S"] = "2"
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_WATCH_TIMEOUT_S"] = "90"
 
 	if err := scriptgen.WriteEnvFile(h.scriptsDir, prepared.envVars); err != nil {
 		h.completionRegistry.RemoveRun(testID)
@@ -582,25 +586,25 @@ func (h *TestHandler) configureArtifactUploads(testID string, prepared *executio
 	return nil
 }
 
-func (h *TestHandler) loadUploadedSummary(testID string, finalMetrics *model.AggregatedMetrics, metadata *model.TestMetadata) summaryCollectionResult {
+func (h *TestHandler) loadUploadedSummary(testID string, finalMetrics *model.AggregatedMetrics, expectedWorkers []string) summaryCollectionResult {
 	if h.completionRegistry == nil {
 		return summaryCollectionResult{
-			ArtifactCollection: classifyArtifactCollection(expectedWorkersFromMetadata(metadata), nil),
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
 		}
 	}
 
 	snapshot, ok := h.completionRegistry.Snapshot(testID)
 	if !ok {
 		return summaryCollectionResult{
-			ArtifactCollection: classifyArtifactCollection(expectedWorkersFromMetadata(metadata), nil),
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
 		}
 	}
 
 	raw := completion.BuildRawSummary(snapshot, completion.ArtifactSummary)
-	result, err := summaryCollectionFromRaw(snapshot.ExpectedWorkers, raw, finalMetrics)
+	result, err := summaryCollectionFromRaw(expectedWorkers, raw, finalMetrics)
 	if err != nil {
 		return summaryCollectionResult{
-			ArtifactCollection: classifyArtifactCollection(snapshot.ExpectedWorkers, nil),
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
 		}
 	}
 	return result
@@ -905,8 +909,6 @@ func (h *TestHandler) reloadWorkersForExecution(ctx context.Context) error {
 		h.logger.Warn("some workers failed to stop (may already be stopped)", "error", err)
 	}
 
-	time.Sleep(3 * time.Second)
-
 	waitCtx, waitCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer waitCancel()
 
@@ -973,29 +975,32 @@ func applySummaryPercentiles(finalMetrics *model.AggregatedMetrics, percentiles 
 	}
 }
 
-func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.AggregatedMetrics, metadata *model.TestMetadata) summaryCollectionResult {
+func (h *TestHandler) loadCompletionSummary(ctx context.Context, testID string, finalMetrics *model.AggregatedMetrics, expectedWorkers []string, deadline time.Time) summaryCollectionResult {
 	const summaryPollDelay = 1 * time.Second
 
-	expectedWorkers := expectedWorkersFromMetadata(metadata)
-	graceWindow := artifactCollectionGraceWindow(metadata)
-	deadline := time.Now().Add(graceWindow)
+	if len(expectedWorkers) == 0 {
+		expectedWorkers = h.orch.WorkerNames()
+	}
+
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}
+	}
 
 	best := summaryCollectionResult{
 		ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
 	}
 
-	h.logger.Info("collecting completion artifacts with adaptive grace window",
+	h.logger.Info("collecting completion artifacts with bounded deadline",
 		"test_id", testID,
-		"grace_window_sec", int(graceWindow.Seconds()),
 		"expected_workers", len(expectedWorkers),
+		"deadline_sec", int(remaining.Seconds()),
 	)
 
 	for attempt := 0; ; attempt++ {
-		if attempt > 0 {
-			time.Sleep(summaryPollDelay)
-		}
-
-		uploadedResult := h.loadUploadedSummary(testID, finalMetrics, metadata)
+		uploadedResult := h.loadUploadedSummary(testID, finalMetrics, expectedWorkers)
 		if uploadedResult.Loaded {
 			if uploadedResult.ArtifactCollection.Status == "complete" {
 				h.logger.Info("summary percentiles loaded from worker uploads",
@@ -1043,15 +1048,36 @@ func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.A
 			h.logger.Debug("summary files not ready yet", "attempt", attempt+1)
 		}
 
-		if time.Now().After(deadline) {
+		if !time.Now().Before(deadline) {
 			break
+		}
+
+		waitFor := summaryPollDelay
+		if untilDeadline := time.Until(deadline); untilDeadline < waitFor {
+			waitFor = untilDeadline
+		}
+		timer := time.NewTimer(waitFor)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			h.logger.Warn("completion artifact collection interrupted",
+				"test_id", testID,
+				"error", ctx.Err(),
+			)
+			if best.Loaded {
+				return best
+			}
+			return summaryCollectionResult{
+				ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+			}
+		case <-timer.C:
 		}
 	}
 
 	if best.Loaded {
 		h.logger.Warn("persisting partial worker summary artifacts after retries",
 			"test_id", testID,
-			"grace_window_sec", int(graceWindow.Seconds()),
+			"deadline_sec", int(time.Until(deadline).Seconds()),
 			"received_workers", best.ArtifactCollection.ReceivedWorkerSummaryCount,
 			"expected_workers", best.ArtifactCollection.ExpectedWorkerCount,
 			"missing_workers", strings.Join(best.ArtifactCollection.MissingWorkers, ","),
@@ -1219,10 +1245,6 @@ func (h *TestHandler) ExecuteTest(ctx context.Context, req model.TestRequest, us
 		return "", false, nil, err
 	}
 
-	if err := h.reloadWorkersForExecution(ctx); err != nil {
-		return "", false, nil, err
-	}
-
 	scriptgen.CleanupSummaries(h.outputDir)
 	scriptgen.CleanupPayloadArtifacts(h.outputDir)
 	scriptgen.CleanupAuthSummaries(h.outputDir)
@@ -1233,6 +1255,15 @@ func (h *TestHandler) ExecuteTest(ctx context.Context, req model.TestRequest, us
 	}
 
 	if err := h.configureArtifactUploads(testID, prepared); err != nil {
+		_ = h.store.UpdateLoadTestResult(ctx, testID, "error", nil)
+		return "", false, nil, err
+	}
+
+	if err := h.reloadWorkersForExecution(ctx); err != nil {
+		if h.completionRegistry != nil {
+			h.completionRegistry.RemoveRun(testID)
+		}
+		_ = h.store.UpdateLoadTestResult(ctx, testID, "error", nil)
 		return "", false, nil, err
 	}
 
@@ -1261,6 +1292,15 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 	finalMetrics := h.latestCompletionMetrics(ctx, testID)
 	endTime := time.Now()
 	data := h.buildCompletionData(testID, finalMetrics, endTime)
+	expectedWorkers := h.orch.WorkerNames()
+	collectionWindow := artifactCollectionGraceWindow(data.metadata)
+	collectionStart := time.Now()
+	initialCollectionDeadline, collectionDeadline := artifactCollectionDeadlines(
+		collectionStart,
+		collectionWindow,
+		5*time.Second,
+		h.completionRegistry != nil,
+	)
 
 	h.orch.StopPolling()
 
@@ -1271,23 +1311,28 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 	// Wait for k6 handleSummary files or uploaded artifacts. k6 exits when its duration
 	// or managed ramp completes, then writes handleSummary and the watcher can upload
 	// those files before the next worker process starts.
-	summaryResult := h.loadCompletionSummary(testID, finalMetrics, data.metadata)
+	summaryResult := h.loadCompletionSummary(ctx, testID, finalMetrics, expectedWorkers, initialCollectionDeadline)
 	rawSummary, summaryLoaded := summaryResult.Raw, summaryResult.Loaded
 	if data.metadata != nil {
 		data.metadata.ArtifactCollection = summaryResult.ArtifactCollection
 	}
 
 	if h.completionRegistry != nil && (data.metadata == nil || data.metadata.ArtifactCollection == nil || data.metadata.ArtifactCollection.Status != "complete") {
-		h.logger.Info("initial artifact collection incomplete, stopping workers and waiting for late uploads", "test_id", testID)
+		h.logger.Info("initial artifact collection incomplete, stopping workers and waiting for late uploads",
+			"test_id", testID,
+			"remaining_sec", int(time.Until(collectionDeadline).Seconds()),
+		)
 		h.cleanupWorkersAfterCompletion(ctx)
 
-		followUp := h.loadCompletionSummary(testID, finalMetrics, data.metadata)
-		if followUp.Loaded || followUp.ArtifactCollection.ReceivedWorkerSummaryCount > summaryResult.ArtifactCollection.ReceivedWorkerSummaryCount {
-			summaryResult = followUp
-			rawSummary = followUp.Raw
-			summaryLoaded = followUp.Loaded
-			if data.metadata != nil {
-				data.metadata.ArtifactCollection = followUp.ArtifactCollection
+		if time.Now().Before(collectionDeadline) {
+			followUp := h.loadCompletionSummary(ctx, testID, finalMetrics, expectedWorkers, collectionDeadline)
+			if followUp.Loaded || followUp.ArtifactCollection.ReceivedWorkerSummaryCount > summaryResult.ArtifactCollection.ReceivedWorkerSummaryCount {
+				summaryResult = followUp
+				rawSummary = followUp.Raw
+				summaryLoaded = followUp.Loaded
+				if data.metadata != nil {
+					data.metadata.ArtifactCollection = followUp.ArtifactCollection
+				}
 			}
 		}
 	} else {

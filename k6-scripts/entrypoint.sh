@@ -107,7 +107,7 @@ upload_artifact() {
       return 0
     fi
     if [ "$attempt" -eq 5 ]; then
-      echo "failed to upload ${artifact_type} for ${WORKER_ID} after 5 attempts" >&2
+      echo "failed to upload ${artifact_type} for ${WORKER_ID} after 5 attempts (test_id=${SHIVA_ARTIFACT_TEST_ID}, upload_url=${upload_url})" >&2
       return 1
     fi
     sleep 2
