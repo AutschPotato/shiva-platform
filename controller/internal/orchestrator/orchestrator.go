@@ -62,6 +62,7 @@ type Orchestrator struct {
 	zeroMetricRun       int            // consecutive ticks with 0 VUs after seenRunning (native executors)
 	peakWorkerVUs       map[string]int // tracks peak VUs per worker address
 	maxTestDuration     time.Duration  // absolute safety timeout for any test
+	workerReadyTimeout  time.Duration  // optional fixed timeout for worker start readiness checks
 	dashboard           DashboardRuntimeConfig
 
 	Ramping *RampingManager
@@ -94,6 +95,15 @@ func New(addresses []string, pollInterval time.Duration, maxTestDuration time.Du
 	}
 	o.Ramping = NewRampingManager(o, logger)
 	return o
+}
+
+func (o *Orchestrator) SetWorkerReadyTimeout(timeout time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if timeout < 0 {
+		timeout = 0
+	}
+	o.workerReadyTimeout = timeout
 }
 
 // SetPhase updates the current test phase (visible to frontend via polling).
@@ -164,12 +174,55 @@ func (o *Orchestrator) ResumeAll(ctx context.Context) error {
 	return o.resumeAll(ctx, false, false)
 }
 
-func (o *Orchestrator) recoverWorkersForStart(ctx context.Context) error {
+func (o *Orchestrator) startupReadyTimeoutForAttempt(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+
+	o.mu.RLock()
+	fixed := o.workerReadyTimeout
+	pollInterval := o.pollInterval
+	workerCount := len(o.workers)
+	o.mu.RUnlock()
+
+	if fixed > 0 {
+		return fixed
+	}
+
+	// Adaptive fallback instead of a fixed timeout:
+	// - scales with worker count
+	// - leaves enough poll windows for two stable-ready checks
+	// - increases slightly for later recovery attempts
+	pollBudget := pollInterval * time.Duration(10+(attempt-1)*2)
+	if pollBudget < 12*time.Second {
+		pollBudget = 12 * time.Second
+	}
+
+	workerBudget := time.Duration(workerCount) * 3 * time.Second
+	timeout := 10*time.Second + pollBudget + workerBudget
+	if timeout < 25*time.Second {
+		timeout = 25 * time.Second
+	}
+	if timeout > 2*time.Minute {
+		timeout = 2 * time.Minute
+	}
+
+	return timeout
+}
+
+func (o *Orchestrator) recoverWorkersForStart(ctx context.Context, attempt int) error {
 	if err := o.StopAll(ctx); err != nil {
 		return err
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	waitTimeout := o.startupReadyTimeoutForAttempt(attempt)
+	o.logger.Info("waiting for workers to become start-ready after recovery",
+		"attempt", attempt,
+		"timeout", waitTimeout.String(),
+		"workers", len(o.workers),
+	)
+
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
 	return o.WaitForAllReady(waitCtx)
 }
@@ -201,7 +254,7 @@ func (o *Orchestrator) ResumeAllForStart(ctx context.Context, controllable bool)
 			"max_attempts", maxRecoveryAttempts,
 			"error", err,
 		)
-		if err := o.recoverWorkersForStart(ctx); err != nil {
+		if err := o.recoverWorkersForStart(ctx, attempt); err != nil {
 			return fmt.Errorf("failed to recover workers after active-state resume race: %w", err)
 		}
 	}

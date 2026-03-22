@@ -276,6 +276,46 @@ func TestWaitForAllReadyRequiresStableReadyState(t *testing.T) {
 	}
 }
 
+func TestStartupReadyTimeoutForAttemptScalesWithWorkerCountAndAttempt(t *testing.T) {
+	t.Helper()
+
+	logger := slog.New(slog.NewTextHandler(testWriter{t}, nil))
+	small := New([]string{"worker1:6565"}, 2*time.Second, time.Hour, logger, DashboardRuntimeConfig{})
+	large := New([]string{
+		"worker1:6565", "worker2:6565", "worker3:6565", "worker4:6565", "worker5:6565",
+		"worker6:6565", "worker7:6565", "worker8:6565", "worker9:6565", "worker10:6565",
+	}, 2*time.Second, time.Hour, logger, DashboardRuntimeConfig{})
+
+	smallAttempt1 := small.startupReadyTimeoutForAttempt(1)
+	smallAttempt3 := small.startupReadyTimeoutForAttempt(3)
+	largeAttempt1 := large.startupReadyTimeoutForAttempt(1)
+
+	if smallAttempt1 < 25*time.Second {
+		t.Fatalf("expected minimum adaptive timeout >= 25s, got %s", smallAttempt1)
+	}
+	if smallAttempt3 <= smallAttempt1 {
+		t.Fatalf("expected later attempts to increase adaptive timeout, got attempt1=%s attempt3=%s", smallAttempt1, smallAttempt3)
+	}
+	if largeAttempt1 <= smallAttempt1 {
+		t.Fatalf("expected larger worker fleets to increase adaptive timeout, got small=%s large=%s", smallAttempt1, largeAttempt1)
+	}
+}
+
+func TestStartupReadyTimeoutForAttemptHonorsFixedOverride(t *testing.T) {
+	t.Helper()
+
+	logger := slog.New(slog.NewTextHandler(testWriter{t}, nil))
+	orch := New([]string{"worker1:6565", "worker2:6565"}, 2*time.Second, time.Hour, logger, DashboardRuntimeConfig{})
+
+	orch.SetWorkerReadyTimeout(18 * time.Second)
+	if got := orch.startupReadyTimeoutForAttempt(1); got != 18*time.Second {
+		t.Fatalf("expected fixed worker ready timeout override to be used, got %s", got)
+	}
+	if got := orch.startupReadyTimeoutForAttempt(3); got != 18*time.Second {
+		t.Fatalf("expected fixed worker ready timeout override to ignore attempt number, got %s", got)
+	}
+}
+
 type testWriter struct {
 	t *testing.T
 }

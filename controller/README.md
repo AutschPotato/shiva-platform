@@ -50,3 +50,5 @@ The frontend-facing controller contract is documented in:
 - [docs/deployment.md](./docs/deployment.md)
 - [docs/repo-extraction.md](./docs/repo-extraction.md)
 - [.env.example](./.env.example)
+
+Runtime note: worker startup readiness uses adaptive timeout mode by default. A fixed override is available via `K6_WORKER_READY_TIMEOUT_SEC` when needed.

@@ -43,12 +43,13 @@ type Config struct {
 
 	CORSOrigins []string
 
-	MetricsPollIntervalMS int
-	MaxTestDurationMin    int
-	K6CompletionBufferSec int
-	K6DashboardEnabled    bool
-	K6DashboardHost       string
-	K6DashboardPort       int
+	MetricsPollIntervalMS   int
+	MaxTestDurationMin      int
+	K6CompletionBufferSec   int
+	K6WorkerReadyTimeoutSec int
+	K6DashboardEnabled      bool
+	K6DashboardHost         string
+	K6DashboardPort         int
 
 	PublicAppURL             string
 	PasswordResetTokenTTLMin int
@@ -87,6 +88,7 @@ func Load() (*Config, error) {
 		MetricsPollIntervalMS:    envInt("METRICS_POLL_INTERVAL_MS", 2000),
 		MaxTestDurationMin:       envInt("MAX_TEST_DURATION_MIN", 120),
 		K6CompletionBufferSec:    envInt("K6_COMPLETION_BUFFER_SEC", 30),
+		K6WorkerReadyTimeoutSec:  envInt("K6_WORKER_READY_TIMEOUT_SEC", 0),
 		K6DashboardEnabled:       envBool("K6_DASHBOARD_ENABLED", false),
 		K6DashboardHost:          envStr("K6_DASHBOARD_HOST", "0.0.0.0"),
 		K6DashboardPort:          envInt("K6_DASHBOARD_PORT", 5665),

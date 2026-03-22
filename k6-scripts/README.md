@@ -10,13 +10,13 @@ Stable files that belong in the repository:
 
 Generated runtime files such as `current-test.js`, `config.json`, and `k6-env.sh` are created per test run and should exist locally at runtime, but should not be committed to the repository.
 
-## Opt-In Controller Fetch
+## Controller Fetch Mode
 
-The worker entrypoint supports an opt-in fetch mode for Kubernetes-style deployments where workers do not share the controller's `/scripts` volume.
+The worker entrypoint supports a fetch mode for deployments where workers do not share the controller's `/scripts` volume.
 
 - Enable the fetch with `SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER=true` (or `1`).
 - Point the worker at the controller with `CONTROLLER_URL`, for example `http://controller:8080`.
-- Leave the fetch disabled for the normal local Docker Compose setup. The versioned `docker-compose.yml` remains the default onboarding path and continues to use the shared-volume model.
+- The versioned `docker-compose.yml` now enables fetch mode by default for workers.
 
 When fetch mode is enabled, the worker downloads:
 
@@ -28,7 +28,7 @@ The worker's local `/scripts` path must be writable in fetch mode.
 
 ## Local Fetch Smoke Test
 
-To test the fetch feature locally without changing the versioned `docker-compose.yml`, use the versioned override at `.local/docker-compose.fetch.override.yml`.
+The default compose already runs in fetch mode. The versioned override at `.local/docker-compose.fetch.override.yml` is useful when you want a smaller single-worker smoke setup.
 
 The override file is intentionally kept in the repository so the fetch-test setup is reproducible across machines. Only the writable runtime directory `.local/fetch-worker-scripts/` is ignored by Git.
 
@@ -61,4 +61,8 @@ docker compose -f docker-compose.yml -f .local/docker-compose.fetch.override.yml
 3. Run a smoke test against the platform.
 4. Stop the stack when done.
 
-This keeps the normal local onboarding experience unchanged while still allowing the fetch-based worker startup path to be verified on demand.
+## Optional Shared-Volume Compatibility Mode
+
+If you need to validate legacy behavior with a shared `/scripts` volume, use `.local/docker-compose.shared-volume.override.yml`.
+
+That override explicitly disables fetch mode (`SHIVA_FETCH_SCRIPTS_FROM_CONTROLLER=false`) and mounts `./k6-scripts` into each worker.
