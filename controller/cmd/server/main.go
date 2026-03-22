@@ -96,6 +96,9 @@ func run(logger *slog.Logger) error {
 		Port:    cfg.K6DashboardPort,
 	}
 	orch := orchestrator.New(cfg.Workers, pollInterval, maxTestDuration, logger, dashboardRuntime)
+	if cfg.K6WorkerReadyTimeoutSec > 0 {
+		orch.SetWorkerReadyTimeout(time.Duration(cfg.K6WorkerReadyTimeoutSec) * time.Second)
+	}
 	logger.Info("worker discovery",
 		"mode", string(cfg.WorkerDiscovery),
 		"count", len(cfg.Workers),
