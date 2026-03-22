@@ -19,6 +19,11 @@ For platform-only extraction readiness, use the current repo-root `docker-compos
 
 Use [../.env.example](../.env.example) as the baseline for controller-side deployment configuration.
 
+Worker startup readiness tuning:
+
+- `K6_WORKER_READY_TIMEOUT_SEC=0` keeps adaptive timeout mode (recommended default).
+- Set a value `> 0` only if you need a fixed readiness timeout override for specific environments.
+
 Frontend deployments consume this backend through:
 
 - controller base URL

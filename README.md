@@ -38,17 +38,22 @@ docker compose -f .\docker-compose.yml down
 
 This starts the local integrated platform stack with MySQL, controller, workers, dummy targets, and the target load balancer.
 
-## Optional Local Fetch Test
+## Runtime Modes For Local Validation
 
-The default local Docker Compose setup continues to use the shared `/scripts` volume and does not enable the worker fetch mode.
+The default local Docker Compose setup now uses the PVC-free flow:
 
-If you want to smoke-test the opt-in worker fetch flow locally, use the versioned override at `.local/docker-compose.fetch.override.yml` together with the normal stack:
+- workers fetch `current-test.js`/`config.json`/`k6-env.sh` from the controller
+- workers upload summary/auth/payload artifacts back to the controller
+- no shared `/scripts` volume between controller and workers is required
 
-```powershell
-docker compose -f .\docker-compose.yml -f .\.local\docker-compose.fetch.override.yml up -d mysql controller worker1 target-lb dummy1
-```
+Optional overrides remain available for targeted smoke tests:
 
-The override file is kept in the repository on purpose so the fetch-test setup stays reproducible across machines. Only the writable runtime directory `.local/fetch-worker-scripts/` is ignored by Git. Detailed fetch-mode notes live in [`k6-scripts/README.md`](./k6-scripts/README.md).
+- Minimal single-worker fetch smoke:
+  - `docker compose -f .\docker-compose.yml -f .\.local\docker-compose.fetch.override.yml up -d mysql controller worker1 target-lb dummy1`
+- Legacy shared-volume compatibility smoke:
+  - `docker compose -f .\docker-compose.yml -f .\.local\docker-compose.shared-volume.override.yml up -d`
+
+Detailed runtime notes live in [`k6-scripts/README.md`](./k6-scripts/README.md).
 
 ## Working Model
 
