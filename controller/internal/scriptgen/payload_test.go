@@ -152,6 +152,46 @@ func TestGenerateFromBuilderIncludesAuthFlow(t *testing.T) {
 	}
 }
 
+func TestGenerateFromBuilderClassifiesBusinessStatusAndTransportFailures(t *testing.T) {
+	req := &model.TestRequest{
+		URL:      "https://api.example.com/test/http/404",
+		Executor: "constant-arrival-rate",
+		Rate:     50,
+		TimeUnit: "1s",
+		Duration: "30s",
+	}
+
+	result, err := GenerateFromBuilder(req, 2)
+	if err != nil {
+		t.Fatalf("expected generated script, got error: %v", err)
+	}
+
+	if !strings.Contains(result.Script, `'status is 2xx': (r) => r.status >= 200 && r.status < 300,`) {
+		t.Fatalf("expected generated script to classify 2xx responses as business success")
+	}
+	if !strings.Contains(result.Script, `businessTransportFailures.add(1);`) {
+		t.Fatalf("expected generated script to classify transport errors explicitly")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 400 && res.status < 500) businessStatus4xx.add(1);`) {
+		t.Fatalf("expected generated script to track 4xx business statuses")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 500) businessStatus5xx.add(1);`) {
+		t.Fatalf("expected generated script to track 5xx business statuses")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 400 && res.status < 500) status4xx.add(1);`) {
+		t.Fatalf("expected generated script to track 4xx status counter")
+	}
+	if !strings.Contains(result.Script, `if (res.status >= 500) status5xx.add(1);`) {
+		t.Fatalf("expected generated script to track 5xx status counter")
+	}
+	if !strings.Contains(result.Script, `businessHttpFailure.add(1);`) {
+		t.Fatalf("expected generated script to increment business failure counter for non-2xx responses")
+	}
+	if !strings.Contains(result.Script, `if (!res || res.error) {`) {
+		t.Fatalf("expected generated script to keep explicit transport error branch")
+	}
+}
+
 func TestBuildBuilderConfigIncludesVisibleRuntimeContract(t *testing.T) {
 	req := &model.TestRequest{
 		URL:              "https://api.example.com/orders",
@@ -278,6 +318,53 @@ func TestWriteEnvFileEncodesPayloadJSONAsBase64(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString([]byte(payload))
 	if !strings.Contains(content, encoded) {
 		t.Fatalf("expected encoded payload content in shell env file")
+	}
+}
+
+func TestWriteEnvFileExportsVariablesForEntrypointShell(t *testing.T) {
+	scriptsDir := t.TempDir()
+
+	err := WriteEnvFile(scriptsDir, map[string]string{
+		"SHIVA_ARTIFACT_UPLOAD_ENABLED": "true",
+		"SHIVA_ARTIFACT_TEST_ID":        "run-123",
+	})
+	if err != nil {
+		t.Fatalf("expected env file to be written, got error: %v", err)
+	}
+
+	contentBytes, err := os.ReadFile(filepath.Join(scriptsDir, "k6-env.sh"))
+	if err != nil {
+		t.Fatalf("failed to read env file: %v", err)
+	}
+	content := string(contentBytes)
+
+	if !strings.Contains(content, "export SHIVA_ARTIFACT_UPLOAD_ENABLED='true'") {
+		t.Fatalf("expected artifact upload flag to be exported for the entrypoint shell")
+	}
+	if !strings.Contains(content, "export SHIVA_ARTIFACT_TEST_ID='run-123'") {
+		t.Fatalf("expected artifact test id to be exported for the entrypoint shell")
+	}
+	if !strings.Contains(content, "K6_ENV_FLAGS=\"$K6_ENV_FLAGS -e SHIVA_ARTIFACT_UPLOAD_ENABLED='true'\"") {
+		t.Fatalf("expected artifact upload flag to remain present in k6 env flags")
+	}
+}
+
+func TestInjectSummaryExportIncludesDirectArtifactUploadHook(t *testing.T) {
+	script := "export default function () { return 1; }"
+
+	injected := InjectSummaryExport(script)
+
+	if !strings.Contains(injected, "import http from 'k6/http';") {
+		t.Fatalf("expected direct http import for artifact uploads")
+	}
+	if !strings.Contains(injected, "function shivaUploadArtifact(") {
+		t.Fatalf("expected upload helper to be injected")
+	}
+	if !strings.Contains(injected, "shivaUploadArtifact('summary', summaryContent, 'application/json');") {
+		t.Fatalf("expected summary uploads to be attempted directly from handleSummary")
+	}
+	if !strings.Contains(injected, "shivaUploadArtifact('auth-summary', authSummaryContent, 'application/json');") {
+		t.Fatalf("expected auth summary uploads to be attempted directly from handleSummary")
 	}
 }
 

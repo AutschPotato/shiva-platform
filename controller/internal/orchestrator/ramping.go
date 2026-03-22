@@ -232,12 +232,12 @@ func (rm *RampingManager) run(ctx context.Context) {
 			if err := rm.orch.ScaleVUs(ctx, effectiveVUs); err != nil {
 				// Don't log on context cancelled (normal during pause/stop)
 				if ctx.Err() == nil {
-					rm.logger.Warn("ramping scale failed", "error", err)
-					// If a managed run can no longer be scaled, let the poll loop
-					// transition into completion instead of hanging forever waiting
-					// for rampDone. This covers fast auth-abort and worker-exit cases
-					// where k6 has already terminated before the next controller tick.
-					rm.orch.SetRampingDone()
+					rm.logger.Warn("ramping scale failed; will retry on next tick",
+						"error", err,
+						"target_vus", effectiveVUs,
+						"stage_index", stageIdx,
+					)
+					continue
 				}
 				return
 			}

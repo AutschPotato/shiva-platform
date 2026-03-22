@@ -71,6 +71,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/auth/forgot-password", authH.ForgotPassword)
 	r.Post("/api/auth/reset-password", authH.CompletePasswordReset)
 	r.Get("/api/internal/scripts/{filename}", scriptsH.ServeScript)
+	r.Post("/api/internal/runs/{testID}/workers/{workerID}/{artifactType}", testH.UploadArtifact)
 
 	// Protected routes (JWT + optional API key)
 	r.Group(func(r chi.Router) {

@@ -137,6 +137,15 @@ type LoadTest struct {
 	URL               string          `json:"url"`
 	Status            string          `json:"status"`
 	ResultJSON        json.RawMessage `json:"result_json,omitempty"`
+	Executor          string          `json:"executor,omitempty"`
+	Stages            []Stage         `json:"stages,omitempty"`
+	VUs               int             `json:"vus,omitempty"`
+	Duration          string          `json:"duration,omitempty"`
+	Rate              int             `json:"rate,omitempty"`
+	TimeUnit          string          `json:"time_unit,omitempty"`
+	PreAllocatedVUs   int             `json:"pre_allocated_vus,omitempty"`
+	MaxVUs            int             `json:"max_vus,omitempty"`
+	SleepSeconds      *float64        `json:"sleep_seconds,omitempty"`
 	ScriptContent     string          `json:"script_content,omitempty"`
 	ConfigContent     string          `json:"config_content,omitempty"`
 	PayloadSourceJSON string          `json:"payload_source_json,omitempty"`
@@ -381,6 +390,13 @@ type WorkerMetricsV2 struct {
 	ActiveDurationS   float64 `json:"active_duration_s,omitempty"`
 }
 
+type ArtifactCollectionMetadata struct {
+	Status                     string   `json:"status,omitempty"`
+	ExpectedWorkerCount        int      `json:"expected_worker_count,omitempty"`
+	ReceivedWorkerSummaryCount int      `json:"received_worker_summary_count,omitempty"`
+	MissingWorkers             []string `json:"missing_workers,omitempty"`
+}
+
 type MetricsV2 struct {
 	HTTPTotal        HTTPMetricsBlock       `json:"http_total"`
 	HTTPBusiness     HTTPMetricsBlock       `json:"http_business"`
@@ -441,14 +457,15 @@ type TimePoint struct {
 
 // TestMetadata holds contextual information about the test run.
 type TestMetadata struct {
-	StartedAt   time.Time        `json:"started_at"`
-	EndedAt     time.Time        `json:"ended_at"`
-	DurationS   float64          `json:"duration_s"`
-	WorkerCount int              `json:"worker_count"`
-	Stages      []Stage          `json:"stages,omitempty"`
-	ScriptURL   string           `json:"script_url,omitempty"`
-	Payload     *PayloadMetadata `json:"payload,omitempty"`
-	Auth        *AuthMetadata    `json:"auth,omitempty"`
+	StartedAt          time.Time                   `json:"started_at"`
+	EndedAt            time.Time                   `json:"ended_at"`
+	DurationS          float64                     `json:"duration_s"`
+	WorkerCount        int                         `json:"worker_count"`
+	ArtifactCollection *ArtifactCollectionMetadata `json:"artifact_collection,omitempty"`
+	Stages             []Stage                     `json:"stages,omitempty"`
+	ScriptURL          string                      `json:"script_url,omitempty"`
+	Payload            *PayloadMetadata            `json:"payload,omitempty"`
+	Auth               *AuthMetadata               `json:"auth,omitempty"`
 }
 
 type PayloadMetadata struct {

@@ -128,6 +128,18 @@ func buildResultListItem(lt model.LoadTest) resultListItem {
 	return item
 }
 
+func hasResultExecutionData(lt *model.LoadTest) bool {
+	if lt == nil {
+		return false
+	}
+	return len(lt.Stages) > 0 ||
+		lt.VUs > 0 ||
+		lt.Duration != "" ||
+		lt.Rate > 0 ||
+		lt.PreAllocatedVUs > 0 ||
+		lt.MaxVUs > 0
+}
+
 func buildResultResponse(lt *model.LoadTest) map[string]any {
 	resp := map[string]any{
 		"id":           lt.ID,
@@ -187,6 +199,35 @@ func buildResultResponse(lt *model.LoadTest) map[string]any {
 	}
 	if lt.ContentType != "" {
 		resp["content_type"] = lt.ContentType
+	}
+	if hasResultExecutionData(lt) {
+		if lt.Executor != "" {
+			resp["executor"] = lt.Executor
+		}
+		if len(lt.Stages) > 0 {
+			resp["stages"] = lt.Stages
+		}
+		if lt.VUs > 0 {
+			resp["vus"] = lt.VUs
+		}
+		if lt.Duration != "" {
+			resp["duration"] = lt.Duration
+		}
+		if lt.Rate > 0 {
+			resp["rate"] = lt.Rate
+		}
+		if lt.TimeUnit != "" {
+			resp["time_unit"] = lt.TimeUnit
+		}
+		if lt.PreAllocatedVUs > 0 {
+			resp["pre_allocated_vus"] = lt.PreAllocatedVUs
+		}
+		if lt.MaxVUs > 0 {
+			resp["max_vus"] = lt.MaxVUs
+		}
+		if lt.SleepSeconds != nil {
+			resp["sleep_seconds"] = *lt.SleepSeconds
+		}
 	}
 
 	return resp

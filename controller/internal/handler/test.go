@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/shiva-load-testing/controller/internal/completion"
 	"github.com/shiva-load-testing/controller/internal/middleware"
 	"github.com/shiva-load-testing/controller/internal/model"
 	"github.com/shiva-load-testing/controller/internal/orchestrator"
@@ -37,6 +38,12 @@ type completionData struct {
 	warnings   []model.ConflictWarning
 }
 
+type summaryCollectionResult struct {
+	Raw                string
+	Loaded             bool
+	ArtifactCollection *model.ArtifactCollectionMetadata
+}
+
 type executionPreparation struct {
 	scriptContent    string
 	configContent    string
@@ -53,24 +60,34 @@ type scheduleCompletionNotifier interface {
 }
 
 type TestHandler struct {
-	store            *store.Store
-	orch             *orchestrator.Orchestrator
-	logger           *slog.Logger
-	scriptsDir       string
-	outputDir        string
-	mu               sync.Mutex
-	pendingMeta      map[string]*pendingTestInfo
-	scheduleNotifier scheduleCompletionNotifier
+	store                 *store.Store
+	orch                  *orchestrator.Orchestrator
+	logger                *slog.Logger
+	scriptsDir            string
+	outputDir             string
+	internalControllerURL string
+	completionRegistry    *completion.Registry
+	mu                    sync.Mutex
+	pendingMeta           map[string]*pendingTestInfo
+	scheduleNotifier      scheduleCompletionNotifier
 }
 
-func NewTestHandler(s *store.Store, orch *orchestrator.Orchestrator, logger *slog.Logger, scriptsDir, outputDir string) *TestHandler {
+func NewTestHandler(s *store.Store, orch *orchestrator.Orchestrator, logger *slog.Logger, scriptsDir, outputDir string, completionRegistry *completion.Registry, internalControllerURL string) *TestHandler {
+	if completionRegistry == nil {
+		completionRegistry = completion.NewRegistry()
+	}
+	if strings.TrimSpace(internalControllerURL) == "" {
+		internalControllerURL = "http://controller:8080"
+	}
 	return &TestHandler{
-		store:       s,
-		orch:        orch,
-		logger:      logger,
-		scriptsDir:  scriptsDir,
-		outputDir:   outputDir,
-		pendingMeta: make(map[string]*pendingTestInfo),
+		store:                 s,
+		orch:                  orch,
+		logger:                logger,
+		scriptsDir:            scriptsDir,
+		outputDir:             outputDir,
+		internalControllerURL: internalControllerURL,
+		completionRegistry:    completionRegistry,
+		pendingMeta:           make(map[string]*pendingTestInfo),
 	}
 }
 
@@ -372,13 +389,225 @@ func (h *TestHandler) takePendingMeta(testID string) (*model.TestMetadata, []mod
 	return pm.Meta, pm.Warnings
 }
 
-func newTestMetadata(startTime, endTime time.Time, workerCount int) *model.TestMetadata {
+func newTestMetadata(startTime, endTime time.Time, workerNames []string) *model.TestMetadata {
+	missingWorkers := make([]string, 0, len(workerNames))
+	for _, name := range workerNames {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		missingWorkers = append(missingWorkers, name)
+	}
+
 	return &model.TestMetadata{
 		StartedAt:   startTime,
 		EndedAt:     endTime,
 		DurationS:   endTime.Sub(startTime).Seconds(),
-		WorkerCount: workerCount,
+		WorkerCount: len(workerNames),
+		ArtifactCollection: &model.ArtifactCollectionMetadata{
+			Status:                     "missing",
+			ExpectedWorkerCount:        len(workerNames),
+			ReceivedWorkerSummaryCount: 0,
+			MissingWorkers:             missingWorkers,
+		},
 	}
+}
+
+func artifactCollectionReason(collection *model.ArtifactCollectionMetadata) string {
+	if collection == nil {
+		return ""
+	}
+
+	switch collection.Status {
+	case "complete":
+		return fmt.Sprintf(
+			"Received worker summaries for all %d expected workers.",
+			collection.ExpectedWorkerCount,
+		)
+	case "partial":
+		reason := fmt.Sprintf(
+			"Received %d of %d expected worker summaries.",
+			collection.ReceivedWorkerSummaryCount,
+			collection.ExpectedWorkerCount,
+		)
+		if len(collection.MissingWorkers) > 0 {
+			reason += " Missing workers: " + strings.Join(collection.MissingWorkers, ", ") + "."
+		}
+		return reason
+	case "missing":
+		if collection.ExpectedWorkerCount > 0 {
+			return fmt.Sprintf("No worker summary artifacts were collected for %d expected workers.", collection.ExpectedWorkerCount)
+		}
+		return "No worker summary artifacts were collected before result persistence."
+	default:
+		return ""
+	}
+}
+
+func classifyArtifactCollection(expectedWorkers []string, merged *scriptgen.MergedSummaryMetrics) *model.ArtifactCollectionMetadata {
+	receivedNames := make(map[string]struct{}, len(expectedWorkers))
+	receivedCount := 0
+	if merged != nil {
+		receivedCount = len(merged.Workers)
+		for _, worker := range merged.Workers {
+			name := strings.TrimSpace(worker.Name)
+			if name == "" {
+				continue
+			}
+			receivedNames[name] = struct{}{}
+		}
+	}
+
+	expectedCount := len(expectedWorkers)
+	if expectedCount == 0 && merged != nil {
+		expectedCount = merged.RawWorkerCount
+	}
+
+	missingWorkers := make([]string, 0, expectedCount)
+	for _, worker := range expectedWorkers {
+		worker = strings.TrimSpace(worker)
+		if worker == "" {
+			continue
+		}
+		if _, ok := receivedNames[worker]; ok {
+			continue
+		}
+		missingWorkers = append(missingWorkers, worker)
+	}
+
+	status := "missing"
+	switch {
+	case expectedCount == 0 && receivedCount > 0:
+		status = "complete"
+	case receivedCount <= 0:
+		status = "missing"
+	case expectedCount > 0 && receivedCount >= expectedCount && len(missingWorkers) == 0:
+		status = "complete"
+	default:
+		status = "partial"
+	}
+
+	return &model.ArtifactCollectionMetadata{
+		Status:                     status,
+		ExpectedWorkerCount:        expectedCount,
+		ReceivedWorkerSummaryCount: receivedCount,
+		MissingWorkers:             missingWorkers,
+	}
+}
+
+func artifactCollectionGraceWindow(metadata *model.TestMetadata) time.Duration {
+	const (
+		minGrace = 10 * time.Second
+		maxGrace = 90 * time.Second
+	)
+
+	if metadata == nil {
+		return minGrace
+	}
+
+	durationBased := time.Duration(metadata.DurationS * 0.15 * float64(time.Second))
+	workerBonus := time.Duration(min(metadata.WorkerCount, 10)) * time.Second
+	grace := durationBased + workerBonus
+
+	if grace < minGrace {
+		return minGrace
+	}
+	if grace > maxGrace {
+		return maxGrace
+	}
+	return grace
+}
+
+func artifactCollectionDeadlines(now time.Time, window time.Duration, followUpReserve time.Duration, reserveForFollowUp bool) (time.Time, time.Time) {
+	finalDeadline := now.Add(window)
+	initialDeadline := finalDeadline
+
+	if reserveForFollowUp && followUpReserve > 0 && window > followUpReserve {
+		initialDeadline = finalDeadline.Add(-followUpReserve)
+	}
+
+	return initialDeadline, finalDeadline
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func summaryCollectionFromRaw(expectedWorkers []string, raw string, finalMetrics *model.AggregatedMetrics) (summaryCollectionResult, error) {
+	if strings.TrimSpace(raw) == "" {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}, fmt.Errorf("empty raw summary content")
+	}
+
+	mergedSummary, err := scriptgen.ParseRawSummaryContent(raw)
+	if err != nil {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}, err
+	}
+
+	applySummaryPercentiles(finalMetrics, &scriptgen.SummaryPercentiles{
+		P90: mergedSummary.TotalLatency.P90,
+		P95: mergedSummary.TotalLatency.P95,
+		P99: mergedSummary.TotalLatency.P99,
+	})
+
+	return summaryCollectionResult{
+		Raw:                raw,
+		Loaded:             true,
+		ArtifactCollection: classifyArtifactCollection(expectedWorkers, mergedSummary),
+	}, nil
+}
+
+func (h *TestHandler) configureArtifactUploads(testID string, prepared *executionPreparation) error {
+	if h.completionRegistry == nil {
+		return nil
+	}
+
+	uploadToken := uuid.NewString()
+	h.completionRegistry.RegisterRun(testID, h.orch.WorkerNames(), uploadToken)
+
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_ENABLED"] = "true"
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_URL"] = strings.TrimRight(h.internalControllerURL, "/")
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_TOKEN"] = uploadToken
+	prepared.envVars["SHIVA_ARTIFACT_TEST_ID"] = testID
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_POST_RUN_GRACE_S"] = "5"
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_SETTLE_WINDOW_S"] = "2"
+	prepared.envVars["SHIVA_ARTIFACT_UPLOAD_WATCH_TIMEOUT_S"] = "90"
+
+	if err := scriptgen.WriteEnvFile(h.scriptsDir, prepared.envVars); err != nil {
+		h.completionRegistry.RemoveRun(testID)
+		return fmt.Errorf("failed to write env file for artifact uploads: %w", err)
+	}
+
+	return nil
+}
+
+func (h *TestHandler) loadUploadedSummary(testID string, finalMetrics *model.AggregatedMetrics, expectedWorkers []string) summaryCollectionResult {
+	if h.completionRegistry == nil {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}
+	}
+
+	snapshot, ok := h.completionRegistry.Snapshot(testID)
+	if !ok {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}
+	}
+
+	raw := completion.BuildRawSummary(snapshot, completion.ArtifactSummary)
+	result, err := summaryCollectionFromRaw(expectedWorkers, raw, finalMetrics)
+	if err != nil {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}
+	}
+	return result
 }
 
 func (h *TestHandler) mergePendingMeta(testID string, metadata *model.TestMetadata) []model.ConflictWarning {
@@ -412,7 +641,7 @@ func (h *TestHandler) buildCompletionData(testID string, finalMetrics *model.Agg
 	h.orch.ApplyPeakVUs(finalMetrics)
 	timeSeries := h.orch.GetTimeSeries()
 	startTime := h.orch.GetTestStartTime()
-	metadata := newTestMetadata(startTime, endTime, h.orch.WorkerCount())
+	metadata := newTestMetadata(startTime, endTime, h.orch.WorkerNames())
 	warnings := h.mergePendingMeta(testID, metadata)
 
 	return completionData{
@@ -451,6 +680,14 @@ func (h *TestHandler) persistCompletedResult(ctx context.Context, testID string,
 
 	metricsV2 := buildMetricsV2(data.metrics, rawSummary, data.metadata)
 	result := buildCompletedResult(testID, data.metrics, metricsV2, data.timeSeries, data.metadata, data.warnings, rawSummary, rawAuthSummary)
+	if enriched, mergedPayloadContent, changed := mergeRegistryArtifactsIntoResult(result, h.completionRegistry, testID, payloadContent); changed {
+		result = enriched
+		payloadContent = mergedPayloadContent
+		h.logger.Info("merged latest registry artifacts into completed result",
+			"test_id", testID,
+			"artifact_collection_status", artifactCollectionStatus(result.Metadata),
+		)
+	}
 
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -468,6 +705,13 @@ func (h *TestHandler) persistCompletedResult(ctx context.Context, testID string,
 	}
 
 	return nil
+}
+
+func artifactCollectionStatus(metadata *model.TestMetadata) string {
+	if metadata == nil || metadata.ArtifactCollection == nil {
+		return ""
+	}
+	return metadata.ArtifactCollection.Status
 }
 
 func (h *TestHandler) latestCompletionMetrics(ctx context.Context, testID string) *model.AggregatedMetrics {
@@ -629,6 +873,15 @@ func (h *TestHandler) createRunningLoadTest(ctx context.Context, req model.TestR
 		ProjectName:       req.ProjectName,
 		URL:               effectiveTestURL(req, prepared.envVars),
 		Status:            "running",
+		Executor:          req.Executor,
+		Stages:            req.Stages,
+		VUs:               req.VUs,
+		Duration:          req.Duration,
+		Rate:              req.Rate,
+		TimeUnit:          req.TimeUnit,
+		PreAllocatedVUs:   req.PreAllocatedVUs,
+		MaxVUs:            req.MaxVUs,
+		SleepSeconds:      req.SleepSeconds,
 		ScriptContent:     prepared.scriptContent,
 		ConfigContent:     prepared.configContent,
 		PayloadSourceJSON: req.PayloadJSON,
@@ -655,8 +908,6 @@ func (h *TestHandler) reloadWorkersForExecution(ctx context.Context) error {
 	if err := h.orch.StopAll(ctx); err != nil {
 		h.logger.Warn("some workers failed to stop (may already be stopped)", "error", err)
 	}
-
-	time.Sleep(3 * time.Second)
 
 	waitCtx, waitCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer waitCancel()
@@ -724,51 +975,145 @@ func applySummaryPercentiles(finalMetrics *model.AggregatedMetrics, percentiles 
 	}
 }
 
-func (h *TestHandler) loadCompletionSummary(testID string, finalMetrics *model.AggregatedMetrics) (string, bool) {
-	const (
-		summaryRetryCount = 45
-		summaryRetryDelay = 1 * time.Second
+func (h *TestHandler) loadCompletionSummary(ctx context.Context, testID string, finalMetrics *model.AggregatedMetrics, expectedWorkers []string, deadline time.Time) summaryCollectionResult {
+	const summaryPollDelay = 1 * time.Second
+
+	if len(expectedWorkers) == 0 {
+		expectedWorkers = h.orch.WorkerNames()
+	}
+
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return summaryCollectionResult{
+			ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+		}
+	}
+
+	best := summaryCollectionResult{
+		ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+	}
+
+	h.logger.Info("collecting completion artifacts with bounded deadline",
+		"test_id", testID,
+		"expected_workers", len(expectedWorkers),
+		"deadline_sec", int(remaining.Seconds()),
 	)
 
-	for attempt := 0; attempt < summaryRetryCount; attempt++ {
-		if attempt > 0 {
-			time.Sleep(summaryRetryDelay)
-		}
-
-		percentiles, err := scriptgen.ReadAndMergeSummaries(h.outputDir)
-		if err != nil {
-			h.logger.Debug("summary files not ready yet", "attempt", attempt+1, "error", err)
-			continue
+	for attempt := 0; ; attempt++ {
+		uploadedResult := h.loadUploadedSummary(testID, finalMetrics, expectedWorkers)
+		if uploadedResult.Loaded {
+			if uploadedResult.ArtifactCollection.Status == "complete" {
+				h.logger.Info("summary percentiles loaded from worker uploads",
+					"test_id", testID,
+					"attempt", attempt+1,
+					"received_workers", uploadedResult.ArtifactCollection.ReceivedWorkerSummaryCount,
+					"expected_workers", uploadedResult.ArtifactCollection.ExpectedWorkerCount,
+				)
+				return uploadedResult
+			}
+			if uploadedResult.ArtifactCollection.ReceivedWorkerSummaryCount > best.ArtifactCollection.ReceivedWorkerSummaryCount {
+				best = uploadedResult
+			}
 		}
 
 		raw := scriptgen.ReadRawSummaries(h.outputDir)
-		if strings.Contains(raw, `"testRunDurationMs":0`) {
-			h.logger.Debug("summary files contain empty data, waiting for real data", "attempt", attempt+1)
-			continue
+		if strings.TrimSpace(raw) != "" {
+			fileResult, err := summaryCollectionFromRaw(expectedWorkers, raw, finalMetrics)
+			if err != nil {
+				h.logger.Debug("summary files not parseable yet", "attempt", attempt+1, "error", err)
+			} else {
+				if fileResult.ArtifactCollection.ReceivedWorkerSummaryCount > best.ArtifactCollection.ReceivedWorkerSummaryCount {
+					best = fileResult
+				}
+
+				if fileResult.ArtifactCollection.Status == "complete" {
+					h.logger.Info("summary percentiles loaded",
+						"test_id", testID,
+						"attempt", attempt+1,
+						"received_workers", fileResult.ArtifactCollection.ReceivedWorkerSummaryCount,
+						"expected_workers", fileResult.ArtifactCollection.ExpectedWorkerCount,
+					)
+					return fileResult
+				}
+
+				h.logger.Debug("worker summaries incomplete, waiting for remaining artifacts",
+					"test_id", testID,
+					"attempt", attempt+1,
+					"received", fileResult.ArtifactCollection.ReceivedWorkerSummaryCount,
+					"expected", fileResult.ArtifactCollection.ExpectedWorkerCount,
+					"missing_workers", strings.Join(fileResult.ArtifactCollection.MissingWorkers, ","),
+				)
+			}
+		} else {
+			h.logger.Debug("summary files not ready yet", "attempt", attempt+1)
 		}
 
-		h.logger.Info("summary percentiles loaded",
-			"test_id", testID,
-			"attempt", attempt+1,
-			"p90", percentiles.P90,
-			"p95", percentiles.P95,
-			"p99", percentiles.P99,
-		)
+		if !time.Now().Before(deadline) {
+			break
+		}
 
-		applySummaryPercentiles(finalMetrics, percentiles)
-		return raw, true
+		waitFor := summaryPollDelay
+		if untilDeadline := time.Until(deadline); untilDeadline < waitFor {
+			waitFor = untilDeadline
+		}
+		timer := time.NewTimer(waitFor)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			h.logger.Warn("completion artifact collection interrupted",
+				"test_id", testID,
+				"error", ctx.Err(),
+			)
+			if best.Loaded {
+				return best
+			}
+			return summaryCollectionResult{
+				ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+			}
+		case <-timer.C:
+		}
 	}
 
-	return "", false
+	if best.Loaded {
+		h.logger.Warn("persisting partial worker summary artifacts after retries",
+			"test_id", testID,
+			"deadline_sec", int(time.Until(deadline).Seconds()),
+			"received_workers", best.ArtifactCollection.ReceivedWorkerSummaryCount,
+			"expected_workers", best.ArtifactCollection.ExpectedWorkerCount,
+			"missing_workers", strings.Join(best.ArtifactCollection.MissingWorkers, ","),
+		)
+		return best
+	}
+
+	return summaryCollectionResult{
+		ArtifactCollection: classifyArtifactCollection(expectedWorkers, nil),
+	}
 }
 
-func (h *TestHandler) loadCompletionPayloadArtifact() string {
+func (h *TestHandler) loadCompletionPayloadArtifact(testID string) string {
+	if h.completionRegistry != nil {
+		if snapshot, ok := h.completionRegistry.Snapshot(testID); ok {
+			if content := completion.FirstArtifactContent(snapshot, completion.ArtifactPayload); strings.TrimSpace(content) != "" {
+				return content
+			}
+		}
+	}
 	return scriptgen.ReadPayloadArtifact(h.outputDir)
 }
 
-func (h *TestHandler) loadCompletionAuthSummary(metadata *model.TestMetadata) (*scriptgen.AuthSummaryData, string) {
+func (h *TestHandler) loadCompletionAuthSummary(testID string, metadata *model.TestMetadata) (*scriptgen.AuthSummaryData, string) {
 	if !hasConfiguredAuth(metadata) {
 		return nil, ""
+	}
+	if h.completionRegistry != nil {
+		if snapshot, ok := h.completionRegistry.Snapshot(testID); ok {
+			if raw := completion.BuildRawSummary(snapshot, completion.ArtifactAuthSummary); strings.TrimSpace(raw) != "" {
+				authSummary, err := scriptgen.ParseRawAuthSummaryContent(raw)
+				if err == nil {
+					return authSummary, raw
+				}
+			}
+		}
 	}
 	authSummary, err := scriptgen.ReadAndMergeAuthSummaries(h.outputDir)
 	if err != nil {
@@ -900,10 +1245,6 @@ func (h *TestHandler) ExecuteTest(ctx context.Context, req model.TestRequest, us
 		return "", false, nil, err
 	}
 
-	if err := h.reloadWorkersForExecution(ctx); err != nil {
-		return "", false, nil, err
-	}
-
 	scriptgen.CleanupSummaries(h.outputDir)
 	scriptgen.CleanupPayloadArtifacts(h.outputDir)
 	scriptgen.CleanupAuthSummaries(h.outputDir)
@@ -913,7 +1254,23 @@ func (h *TestHandler) ExecuteTest(ctx context.Context, req model.TestRequest, us
 		return "", false, nil, err
 	}
 
+	if err := h.configureArtifactUploads(testID, prepared); err != nil {
+		_ = h.store.UpdateLoadTestResult(ctx, testID, "error", nil)
+		return "", false, nil, err
+	}
+
+	if err := h.reloadWorkersForExecution(ctx); err != nil {
+		if h.completionRegistry != nil {
+			h.completionRegistry.RemoveRun(testID)
+		}
+		_ = h.store.UpdateLoadTestResult(ctx, testID, "error", nil)
+		return "", false, nil, err
+	}
+
 	if err := h.startPreparedExecution(ctx, testID, req, prepared); err != nil {
+		if h.completionRegistry != nil {
+			h.completionRegistry.RemoveRun(testID)
+		}
 		return "", false, nil, err
 	}
 
@@ -922,6 +1279,12 @@ func (h *TestHandler) ExecuteTest(ctx context.Context, req model.TestRequest, us
 
 // onTestComplete is called by the orchestrator when all workers have finished.
 func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
+	defer func() {
+		if h.completionRegistry != nil {
+			h.completionRegistry.RemoveRun(testID)
+		}
+	}()
+
 	h.orch.Ramping.Stop()
 	h.orch.SetPhase(orchestrator.PhaseCollecting, "Collecting final metrics and summary data...")
 
@@ -929,26 +1292,66 @@ func (h *TestHandler) onTestComplete(ctx context.Context, testID string) {
 	finalMetrics := h.latestCompletionMetrics(ctx, testID)
 	endTime := time.Now()
 	data := h.buildCompletionData(testID, finalMetrics, endTime)
+	expectedWorkers := h.orch.WorkerNames()
+	collectionWindow := artifactCollectionGraceWindow(data.metadata)
+	collectionStart := time.Now()
+	initialCollectionDeadline, collectionDeadline := artifactCollectionDeadlines(
+		collectionStart,
+		collectionWindow,
+		5*time.Second,
+		h.completionRegistry != nil,
+	)
 
 	h.orch.StopPolling()
 
-	// Do NOT call StopAll here — let k6 finish naturally when its duration expires.
-	// The externally-controlled executor duration includes a configurable completion buffer.
-	// If we send {stopped: true} now, k6 writes empty handleSummary (0 VUs → 0 data).
-	// Instead, wait for k6 to exit on its own, which produces complete handleSummary.
-	h.logger.Info("waiting for k6 workers to finish naturally (duration buffer)", "test_id", testID)
+	// Let workers finish naturally so k6 can execute handleSummary and the worker-side
+	// watcher can upload artifacts before Docker restarts the container.
+	h.logger.Info("waiting for workers to finish naturally before collecting artifacts", "test_id", testID)
 
-	// Wait for k6 handleSummary files. k6 exits when its duration expires
-	// (up to the configured completion buffer after stages complete), then writes handleSummary and exits.
-	rawSummary, summaryLoaded := h.loadCompletionSummary(testID, finalMetrics)
-	payloadArtifact := h.loadCompletionPayloadArtifact()
-	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(data.metadata)
-	if !summaryLoaded {
-		h.logger.Warn("could not read summary files after retries, P99 will be 0", "test_id", testID)
+	// Wait for k6 handleSummary files or uploaded artifacts. k6 exits when its duration
+	// or managed ramp completes, then writes handleSummary and the watcher can upload
+	// those files before the next worker process starts.
+	summaryResult := h.loadCompletionSummary(ctx, testID, finalMetrics, expectedWorkers, initialCollectionDeadline)
+	rawSummary, summaryLoaded := summaryResult.Raw, summaryResult.Loaded
+	if data.metadata != nil {
+		data.metadata.ArtifactCollection = summaryResult.ArtifactCollection
 	}
 
-	// Now stop workers to clean up (they may have already exited naturally)
-	h.cleanupWorkersAfterCompletion(ctx)
+	if h.completionRegistry != nil && (data.metadata == nil || data.metadata.ArtifactCollection == nil || data.metadata.ArtifactCollection.Status != "complete") {
+		h.logger.Info("initial artifact collection incomplete, stopping workers and waiting for late uploads",
+			"test_id", testID,
+			"remaining_sec", int(time.Until(collectionDeadline).Seconds()),
+		)
+		h.cleanupWorkersAfterCompletion(ctx)
+
+		if time.Now().Before(collectionDeadline) {
+			followUp := h.loadCompletionSummary(ctx, testID, finalMetrics, expectedWorkers, collectionDeadline)
+			if followUp.Loaded || followUp.ArtifactCollection.ReceivedWorkerSummaryCount > summaryResult.ArtifactCollection.ReceivedWorkerSummaryCount {
+				summaryResult = followUp
+				rawSummary = followUp.Raw
+				summaryLoaded = followUp.Loaded
+				if data.metadata != nil {
+					data.metadata.ArtifactCollection = followUp.ArtifactCollection
+				}
+			}
+		}
+	} else {
+		h.cleanupWorkersAfterCompletion(ctx)
+	}
+
+	payloadArtifact := h.loadCompletionPayloadArtifact(testID)
+	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(testID, data.metadata)
+	if !summaryLoaded {
+		status := ""
+		if data.metadata != nil && data.metadata.ArtifactCollection != nil {
+			status = data.metadata.ArtifactCollection.Status
+		}
+		h.logger.Warn("could not read summary files after retries, worker drilldown will be incomplete",
+			"test_id", testID,
+			"artifact_collection_status", status,
+		)
+	}
+
 	h.logCompletedTest(testID, finalMetrics, data)
 
 	if err := h.persistCompletedResult(ctx, testID, data, rawSummary, rawAuthSummary, payloadArtifact, authSummary); err != nil {
@@ -1071,12 +1474,16 @@ func (h *TestHandler) StopTest(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to stop some workers", "error", err)
 	}
 
-	payloadArtifact := h.loadCompletionPayloadArtifact()
-	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(data.metadata)
+	payloadArtifact := h.loadCompletionPayloadArtifact(testID)
+	authSummary, rawAuthSummary := h.loadCompletionAuthSummary(testID, data.metadata)
 	if err := h.persistCompletedResult(r.Context(), testID, data, "", rawAuthSummary, payloadArtifact, authSummary); err != nil {
 		h.logger.Error("failed to persist completed result", "error", err)
 		httpError(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	if h.completionRegistry != nil {
+		h.completionRegistry.RemoveRun(testID)
 	}
 
 	h.orch.SetPhase(orchestrator.PhaseDone, testID)

@@ -1459,17 +1459,63 @@ func InjectSummaryExport(content string) string {
 	if strings.Contains(content, "handleSummary") {
 		return content
 	}
+
+	if !regexp.MustCompile(`(?m)^\s*import\s+http\b.*from\s+['"]k6/http['"]`).MatchString(content) {
+		content = "import http from 'k6/http';\n" + content
+	}
 	return content + `
 
 // --- Auto-injected by controller: export summary with real percentiles ---
+function shivaUploadArtifact(artifactType, content, contentType) {
+  const enabled = String(__ENV.SHIVA_ARTIFACT_UPLOAD_ENABLED || '').toLowerCase();
+  if (!(enabled === 'true' || enabled === '1')) {
+    return;
+  }
+  if (!content) {
+    return;
+  }
+
+  const workerId = String(__ENV.WORKER_ID || 'unknown');
+  const testId = String(__ENV.SHIVA_ARTIFACT_TEST_ID || '');
+  const uploadToken = String(__ENV.SHIVA_ARTIFACT_UPLOAD_TOKEN || '');
+  const baseUrl = String(__ENV.SHIVA_ARTIFACT_UPLOAD_URL || '');
+  if (!workerId || !testId || !uploadToken || !baseUrl) {
+    return;
+  }
+
+  const uploadUrl =
+    String(baseUrl).replace(/\/+$/, '') +
+    '/api/internal/runs/' +
+    encodeURIComponent(testId) +
+    '/workers/' +
+    encodeURIComponent(workerId) +
+    '/' +
+    encodeURIComponent(artifactType);
+
+  try {
+    http.post(uploadUrl, content, {
+      headers: {
+        'Content-Type': contentType || 'application/json',
+        'X-Shiva-Artifact-Token': uploadToken,
+      },
+      timeout: '10s',
+    });
+  } catch (error) {
+    // Best effort only: the controller still has the shared-volume fallback.
+  }
+}
+
 export function handleSummary(data) {
   const wid = __ENV.WORKER_ID || 'unknown';
+  const summaryContent = JSON.stringify(data);
   const artifacts = {
-    ['/output/summary-' + wid + '.json']: JSON.stringify(data),
+    ['/output/summary-' + wid + '.json']: summaryContent,
   };
+  shivaUploadArtifact('summary', summaryContent, 'application/json');
   const payloadArtifact = typeof REQUEST_PAYLOAD_ARTIFACT !== 'undefined' ? REQUEST_PAYLOAD_ARTIFACT : '';
   if (payloadArtifact) {
     artifacts['/output/payload-' + wid + '.json'] = payloadArtifact;
+    shivaUploadArtifact('payload', payloadArtifact, 'application/json');
   }
   if (typeof AUTH_ENABLED !== 'undefined' && AUTH_ENABLED) {
     const allMetrics = data && data.metrics ? data.metrics : {};
@@ -1703,7 +1749,7 @@ export function handleSummary(data) {
           }
         : abortSummaryFromRuntime;
 
-    artifacts['/output/auth-summary-' + wid + '.json'] = JSON.stringify({
+    const authSummaryContent = JSON.stringify({
       status: abortSummary.triggered ? 'aborted' : 'complete',
       message: abortSummary.triggered
         ? abortSummary.reason
@@ -1733,6 +1779,8 @@ export function handleSummary(data) {
         abort_retryable: abortSummary.retryable,
       },
     });
+    artifacts['/output/auth-summary-' + wid + '.json'] = authSummaryContent;
+    shivaUploadArtifact('auth-summary', authSummaryContent, 'application/json');
   }
   return artifacts;
 }
@@ -2160,6 +2208,7 @@ func WriteEnvFile(scriptsDir string, envVars map[string]string) error {
 		}
 		// Shell-safe: single-quote values, escape embedded single quotes
 		escaped := strings.ReplaceAll(value, "'", "'\\''")
+		fmt.Fprintf(&buf, "export %s='%s'\n", key, escaped)
 		fmt.Fprintf(&buf, "K6_ENV_FLAGS=\"$K6_ENV_FLAGS -e %s='%s'\"\n", key, escaped)
 	}
 	return os.WriteFile(path, buf.Bytes(), 0644)

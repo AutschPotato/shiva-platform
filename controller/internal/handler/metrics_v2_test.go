@@ -145,3 +145,59 @@ func TestBuildMetricsV2DerivesZeroBusinessRequestsForAuthOnlyRun(t *testing.T) {
 		t.Fatalf("expected business requests 0 for auth-only run, got %v", metrics.HTTPBusiness.Requests)
 	}
 }
+
+func TestBuildMetricsV2MarksPartialWorkerArtifacts(t *testing.T) {
+	legacy := &model.AggregatedMetrics{
+		TotalRequests: 20,
+		HTTPSuccesses: 20,
+		HTTPFailures:  0,
+		Workers: []model.WorkerMetrics{
+			{Address: "worker1:6565", Status: "ok"},
+			{Address: "worker2:6565", Status: "ok"},
+		},
+	}
+
+	rawSummary := `--- worker1 ---
+{
+  "metrics": {
+    "http_reqs": {"values": {"count": 20}},
+    "http_req_failed": {"values": {"rate": 0}},
+    "iterations": {"values": {"count": 20}},
+    "http_req_duration": {"values": {"avg": 25, "med": 25, "min": 20, "max": 35, "p(90)": 30, "p(95)": 32, "p(99)": 34}}
+  },
+  "state": {"testRunDurationMs": 10000}
+}`
+
+	metadata := &model.TestMetadata{
+		DurationS:   10,
+		WorkerCount: 2,
+		ArtifactCollection: &model.ArtifactCollectionMetadata{
+			Status:                     "partial",
+			ExpectedWorkerCount:        2,
+			ReceivedWorkerSummaryCount: 1,
+			MissingWorkers:             []string{"worker2"},
+		},
+	}
+
+	metrics := buildMetricsV2(legacy, rawSummary, metadata)
+	if metrics == nil {
+		t.Fatalf("expected metrics_v2")
+	}
+
+	var flag *model.MetricQualityFlag
+	for idx := range metrics.QualityFlags {
+		if metrics.QualityFlags[idx].Key == "worker_artifacts" {
+			flag = &metrics.QualityFlags[idx]
+			break
+		}
+	}
+	if flag == nil {
+		t.Fatalf("expected worker_artifacts quality flag")
+	}
+	if flag.Status != "partial" {
+		t.Fatalf("expected partial artifact status, got %q", flag.Status)
+	}
+	if flag.ApproximationReason == "" {
+		t.Fatalf("expected artifact reason to be populated")
+	}
+}

@@ -310,3 +310,37 @@ func TestParseRawSummaryContentIgnoresZeroBusinessDurationMin(t *testing.T) {
 		t.Fatalf("expected positive minimum latency 5, got %v", merged.BusinessLatency.Min)
 	}
 }
+
+func TestParseRawSummaryContentPreservesFirstWorkerName(t *testing.T) {
+	content := `--- worker1 ---
+{
+  "metrics": {
+    "http_reqs": {"values": {"count": 10}},
+    "http_req_duration": {"values": {"avg": 10, "med": 9, "min": 1, "max": 20, "p(90)": 15, "p(95)": 17, "p(99)": 19}}
+  },
+  "state": {"testRunDurationMs": 0}
+}
+
+--- worker2 ---
+{
+  "metrics": {
+    "http_reqs": {"values": {"count": 20}},
+    "http_req_duration": {"values": {"avg": 20, "med": 19, "min": 2, "max": 30, "p(90)": 25, "p(95)": 27, "p(99)": 29}}
+  },
+  "state": {"testRunDurationMs": 0}
+}`
+
+	merged, err := ParseRawSummaryContent(content)
+	if err != nil {
+		t.Fatalf("expected merged summary, got error: %v", err)
+	}
+	if len(merged.Workers) != 2 {
+		t.Fatalf("expected 2 workers, got %d", len(merged.Workers))
+	}
+	if merged.Workers[0].Name != "worker1" {
+		t.Fatalf("expected first worker name worker1, got %q", merged.Workers[0].Name)
+	}
+	if merged.Workers[1].Name != "worker2" {
+		t.Fatalf("expected second worker name worker2, got %q", merged.Workers[1].Name)
+	}
+}

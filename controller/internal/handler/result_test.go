@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/shiva-load-testing/controller/internal/model"
 )
 
 func TestParseResultListParamsAcceptsQAlias(t *testing.T) {
@@ -26,5 +29,110 @@ func TestParseResultListParamsPrefersExplicitSearch(t *testing.T) {
 	_, _, search := parseResultListParams(req)
 	if search != "direct" {
 		t.Fatalf("expected explicit search param to win, got %q", search)
+	}
+}
+
+func TestBuildResultResponseIncludesExecutionFieldsForBuilderRuns(t *testing.T) {
+	sleepSeconds := 1.25
+	resp := buildResultResponse(&model.LoadTest{
+		ID:              "result-1",
+		ProjectName:     "native-fixed-throughput",
+		URL:             "http://target-lb:8090/health",
+		Status:          "completed",
+		UserID:          7,
+		Username:        "admin",
+		Executor:        "constant-arrival-rate",
+		Rate:            240,
+		Duration:        "30s",
+		TimeUnit:        "1s",
+		PreAllocatedVUs: 12,
+		MaxVUs:          24,
+		SleepSeconds:    &sleepSeconds,
+	})
+
+	if got := resp["executor"]; got != "constant-arrival-rate" {
+		t.Fatalf("expected executor to round-trip, got %#v", got)
+	}
+	if got := resp["rate"]; got != 240 {
+		t.Fatalf("expected rate 240, got %#v", got)
+	}
+	if got := resp["duration"]; got != "30s" {
+		t.Fatalf("expected duration 30s, got %#v", got)
+	}
+	if got := resp["time_unit"]; got != "1s" {
+		t.Fatalf("expected time_unit 1s, got %#v", got)
+	}
+	if got := resp["pre_allocated_vus"]; got != 12 {
+		t.Fatalf("expected pre_allocated_vus 12, got %#v", got)
+	}
+	if got := resp["max_vus"]; got != 24 {
+		t.Fatalf("expected max_vus 24, got %#v", got)
+	}
+	if got := resp["sleep_seconds"]; got != sleepSeconds {
+		t.Fatalf("expected sleep_seconds %.2f, got %#v", sleepSeconds, got)
+	}
+}
+
+func TestBuildResultResponseOmitsExecutionFieldsWhenOnlyDefaultsExist(t *testing.T) {
+	resp := buildResultResponse(&model.LoadTest{
+		ID:            "result-2",
+		ProjectName:   "upload-run",
+		URL:           "",
+		Status:        "completed",
+		UserID:        7,
+		Username:      "admin",
+		Executor:      "ramping-vus",
+		TimeUnit:      "1s",
+		ScriptContent: "export default function() {}",
+	})
+
+	for _, key := range []string{"executor", "stages", "vus", "duration", "rate", "time_unit", "pre_allocated_vus", "max_vus", "sleep_seconds"} {
+		if _, ok := resp[key]; ok {
+			t.Fatalf("expected %s to be omitted for non-builder/default-only result payload", key)
+		}
+	}
+}
+
+func TestBuildResultResponseIncludesArtifactCollectionMetadata(t *testing.T) {
+	resultJSON, err := json.Marshal(model.TestResult{
+		Metadata: &model.TestMetadata{
+			WorkerCount: 3,
+			ArtifactCollection: &model.ArtifactCollectionMetadata{
+				Status:                     "partial",
+				ExpectedWorkerCount:        3,
+				ReceivedWorkerSummaryCount: 2,
+				MissingWorkers:             []string{"worker3"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal result json: %v", err)
+	}
+
+	resp := buildResultResponse(&model.LoadTest{
+		ID:          "result-3",
+		ProjectName: "partial-worker-artifacts",
+		Status:      "completed",
+		UserID:      9,
+		Username:    "admin",
+		ResultJSON:  resultJSON,
+	})
+
+	metadataValue, ok := resp["metadata"]
+	if !ok {
+		t.Fatalf("expected metadata in result response")
+	}
+	metadata, ok := metadataValue.(*model.TestMetadata)
+	if !ok {
+		t.Fatalf("expected metadata to stay typed, got %T", metadataValue)
+	}
+	if metadata.ArtifactCollection == nil {
+		t.Fatalf("expected artifact collection metadata")
+	}
+	if metadata.ArtifactCollection.Status != "partial" {
+		t.Fatalf("expected partial artifact collection status, got %q", metadata.ArtifactCollection.Status)
+	}
+	if len(metadata.ArtifactCollection.MissingWorkers) != 1 || metadata.ArtifactCollection.MissingWorkers[0] != "worker3" {
+		t.Fatalf("expected worker3 to be missing, got %#v", metadata.ArtifactCollection.MissingWorkers)
 	}
 }

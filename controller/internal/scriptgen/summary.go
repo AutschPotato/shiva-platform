@@ -465,18 +465,17 @@ func ParseRawSummaryContent(content string) (*MergedSummaryMetrics, error) {
 	blocks := strings.Split(trimmed, "\n--- ")
 	summaries := make([]namedSummary, 0, len(blocks))
 	for idx, block := range blocks {
-		if idx == 0 && !strings.HasPrefix(block, "--- ") {
-			block = strings.TrimPrefix(block, "--- ")
-		} else {
+		if idx > 0 {
 			block = "--- " + block
 		}
+		block = strings.TrimPrefix(block, "--- ")
 		lines := strings.SplitN(block, "\n", 2)
 		if len(lines) != 2 {
 			continue
 		}
 		header := strings.TrimSpace(lines[0])
 		body := strings.TrimSpace(lines[1])
-		name := strings.TrimSuffix(strings.TrimPrefix(header, "--- "), " ---")
+		name := strings.TrimSuffix(header, " ---")
 		if name == "" || body == "" {
 			continue
 		}

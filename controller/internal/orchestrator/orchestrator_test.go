@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,7 +46,7 @@ func TestShouldCompleteNativeRunWhenWorkerStatusShowsEnded(t *testing.T) {
 	}
 }
 
-func TestResumeAllForStartToleratesAlreadyStartedNativeWorker(t *testing.T) {
+func TestResumeAllForStartFailsAlreadyStartedNativeWorker(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,12 +73,12 @@ func TestResumeAllForStartToleratesAlreadyStartedNativeWorker(t *testing.T) {
 		logger:  slog.New(slog.NewTextHandler(testWriter{t}, nil)),
 	}
 
-	if err := orch.ResumeAllForStart(context.Background(), false); err != nil {
-		t.Fatalf("expected native startup resume to tolerate already-started worker: %v", err)
+	if err := orch.ResumeAllForStart(context.Background(), false); err == nil {
+		t.Fatalf("expected native startup resume to fail when worker is already active")
 	}
 }
 
-func TestResumeAllForStartToleratesUnpausedControllableWorker(t *testing.T) {
+func TestResumeAllForStartFailsUnpausedControllableWorker(t *testing.T) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +105,120 @@ func TestResumeAllForStartToleratesUnpausedControllableWorker(t *testing.T) {
 		logger:  slog.New(slog.NewTextHandler(testWriter{t}, nil)),
 	}
 
+	if err := orch.ResumeAllForStart(context.Background(), true); err == nil {
+		t.Fatalf("expected controllable startup resume to fail when worker is already active")
+	}
+}
+
+func TestResumeAllForStartRecoversFromUnpausedWorker(t *testing.T) {
+	t.Helper()
+
+	var recovered bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"type":"status","id":"default","attributes":{"status":2,"paused":true,"vus":0,"vus-max":5,"stopped":false,"running":false,"tainted":false}}}`))
+		case http.MethodPatch:
+			bodyBytes, _ := io.ReadAll(r.Body)
+			body := string(bodyBytes)
+
+			if strings.Contains(body, `"stopped":true`) {
+				recovered = true
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{"type":"status","id":"default","attributes":{"status":2,"paused":true,"vus":0,"vus-max":5,"stopped":false,"running":false,"tainted":false}}}`))
+				return
+			}
+
+			if strings.Contains(body, `"paused":false`) && !recovered {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"errors":[{"status":"500","title":"Pause error","detail":"test execution wasn't paused"}]}`))
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"type":"status","id":"default","attributes":{"status":3,"paused":false,"vus":0,"vus-max":5,"stopped":false,"running":true,"tainted":false}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	worker := NewWorker(server.Listener.Addr().String(), false, "", 0)
+	worker.client.Timeout = 2 * time.Second
+
+	orch := &Orchestrator{
+		workers: []*Worker{worker},
+		logger:  slog.New(slog.NewTextHandler(testWriter{t}, nil)),
+	}
+
 	if err := orch.ResumeAllForStart(context.Background(), true); err != nil {
-		t.Fatalf("expected controllable startup resume to tolerate already-active worker: %v", err)
+		t.Fatalf("expected startup recovery to succeed, got error: %v", err)
+	}
+	if !recovered {
+		t.Fatalf("expected recovery path to stop and reload worker before retry")
+	}
+}
+
+func TestResumeAllForStartRecoversAcrossMultipleRaces(t *testing.T) {
+	t.Helper()
+
+	stopCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"type":"status","id":"default","attributes":{"status":2,"paused":true,"vus":0,"vus-max":5,"stopped":false,"running":false,"tainted":false}}}`))
+		case http.MethodPatch:
+			bodyBytes, _ := io.ReadAll(r.Body)
+			body := string(bodyBytes)
+
+			if strings.Contains(body, `"stopped":true`) {
+				stopCalls++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{"type":"status","id":"default","attributes":{"status":2,"paused":true,"vus":0,"vus-max":5,"stopped":false,"running":false,"tainted":false}}}`))
+				return
+			}
+
+			if strings.Contains(body, `"paused":false`) && stopCalls < 2 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"errors":[{"status":"500","title":"Pause error","detail":"test execution wasn't paused"}]}`))
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"type":"status","id":"default","attributes":{"status":3,"paused":false,"vus":0,"vus-max":5,"stopped":false,"running":true,"tainted":false}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	worker := NewWorker(server.Listener.Addr().String(), false, "", 0)
+	worker.client.Timeout = 2 * time.Second
+
+	orch := &Orchestrator{
+		workers: []*Worker{worker},
+		logger:  slog.New(slog.NewTextHandler(testWriter{t}, nil)),
+	}
+
+	if err := orch.ResumeAllForStart(context.Background(), true); err != nil {
+		t.Fatalf("expected startup recovery to succeed after repeated races, got error: %v", err)
+	}
+	if stopCalls < 2 {
+		t.Fatalf("expected multiple recovery stop cycles, got %d", stopCalls)
 	}
 }
 

@@ -60,8 +60,9 @@ type Config struct {
 	SMTPFromName             string
 	EncryptionKey            string
 
-	ScriptsDir string
-	OutputDir  string
+	ScriptsDir            string
+	OutputDir             string
+	InternalControllerURL string
 }
 
 func Load() (*Config, error) {
@@ -99,8 +100,9 @@ func Load() (*Config, error) {
 		SMTPFromName:             envStr("SMTP_FROM_NAME", "Shiva"),
 		EncryptionKey:            envStr("APP_ENCRYPTION_KEY", envStr("JWT_SECRET", "change-me-in-production")),
 
-		ScriptsDir: envStr("SCRIPTS_DIR", "/scripts"),
-		OutputDir:  envStr("OUTPUT_DIR", "/output"),
+		ScriptsDir:            envStr("SCRIPTS_DIR", "/scripts"),
+		OutputDir:             envStr("OUTPUT_DIR", "/output"),
+		InternalControllerURL: envStr("INTERNAL_CONTROLLER_URL", "http://controller:8080"),
 	}
 
 	c.Workers, c.WorkerDiscovery = resolveWorkers()

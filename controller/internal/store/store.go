@@ -44,6 +44,15 @@ func (s *Store) Migrate(ctx context.Context) error {
 			url TEXT NOT NULL,
 			status VARCHAR(50) NOT NULL DEFAULT 'pending',
 			result_json JSON,
+			executor VARCHAR(50) NOT NULL DEFAULT 'ramping-vus',
+			stages JSON,
+			vus INT DEFAULT 0,
+			duration VARCHAR(50) DEFAULT '',
+			rate INT DEFAULT 0,
+			time_unit VARCHAR(10) DEFAULT '1s',
+			pre_allocated_vus INT DEFAULT 0,
+			max_vus INT DEFAULT 0,
+			sleep_seconds DOUBLE DEFAULT 0.5,
 			script_content MEDIUMTEXT,
 			config_content MEDIUMTEXT,
 			payload_source_json MEDIUMTEXT,
@@ -182,6 +191,15 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"load_tests", "config_content", "MEDIUMTEXT"},
 		{"load_tests", "payload_source_json", "MEDIUMTEXT"},
 		{"load_tests", "payload_content", "MEDIUMTEXT"},
+		{"load_tests", "executor", "VARCHAR(50) NOT NULL DEFAULT 'ramping-vus'"},
+		{"load_tests", "stages", "JSON"},
+		{"load_tests", "vus", "INT DEFAULT 0"},
+		{"load_tests", "duration", "VARCHAR(50) DEFAULT ''"},
+		{"load_tests", "rate", "INT DEFAULT 0"},
+		{"load_tests", "time_unit", "VARCHAR(10) DEFAULT '1s'"},
+		{"load_tests", "pre_allocated_vus", "INT DEFAULT 0"},
+		{"load_tests", "max_vus", "INT DEFAULT 0"},
+		{"load_tests", "sleep_seconds", "DOUBLE DEFAULT 0.5"},
 		{"load_tests", "http_method", "VARCHAR(16) NOT NULL DEFAULT 'GET'"},
 		{"load_tests", "content_type", "VARCHAR(255) NOT NULL DEFAULT 'application/json'"},
 		{"load_tests", "auth_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"},
@@ -573,12 +591,20 @@ func (s *Store) UserCount(ctx context.Context) (int, error) {
 // LoadTest operations
 
 func (s *Store) CreateLoadTest(ctx context.Context, lt *model.LoadTest) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO load_tests (id, project_name, url, status, script_content, config_content, payload_source_json, payload_content, http_method, content_type,
+	stagesJSON, err := json.Marshal(lt.Stages)
+	if err != nil {
+		return fmt.Errorf("create load test stages: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO load_tests (id, project_name, url, status, executor, stages, vus, duration, rate, time_unit, pre_allocated_vus, max_vus, sleep_seconds,
+		 script_content, config_content, payload_source_json, payload_content, http_method, content_type,
 		 auth_enabled, auth_mode, auth_token_url, auth_client_id, auth_client_auth_method, auth_refresh_skew_seconds, auth_secret_source, auth_secret_configured,
 		 user_id, username)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		lt.ID, lt.ProjectName, lt.URL, lt.Status, nullString(lt.ScriptContent), nullString(lt.ConfigContent), nullString(lt.PayloadSourceJSON), nullString(lt.PayloadContent),
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		lt.ID, lt.ProjectName, lt.URL, lt.Status,
+		lt.Executor, nullString(string(stagesJSON)), lt.VUs, lt.Duration, lt.Rate, lt.TimeUnit, lt.PreAllocatedVUs, lt.MaxVUs, nullFloat64(lt.SleepSeconds),
+		nullString(lt.ScriptContent), nullString(lt.ConfigContent), nullString(lt.PayloadSourceJSON), nullString(lt.PayloadContent),
 		defaultHTTPMethod(lt.HTTPMethod), defaultContentType(lt.ContentType),
 		lt.AuthConfig.Enabled, nullString(lt.AuthConfig.Mode), nullString(lt.AuthConfig.TokenURL), nullString(lt.AuthConfig.ClientID),
 		defaultAuthClientAuthMethod(lt.AuthConfig.ClientAuthMethod), defaultAuthRefreshSkewSeconds(lt.AuthConfig.RefreshSkewSeconds), nullString(lt.AuthConfig.SecretSource), authConfigured(lt.AuthConfig),
@@ -625,6 +651,13 @@ func nullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+func nullFloat64(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
+}
+
 func authConfigured(cfg model.AuthConfig) bool {
 	return cfg.SecretConfigured || cfg.ClientSecretEncrypted != ""
 }
@@ -663,10 +696,12 @@ func applyAuthConfig(
 }
 
 func scanLoadTest(scanner loadTestScanner, lt *model.LoadTest) error {
-	var resultJSON, scriptContent, configContent, payloadSourceJSON, payloadContent sql.NullString
+	var resultJSON, stagesJSON, scriptContent, configContent, payloadSourceJSON, payloadContent sql.NullString
+	var sleepSeconds sql.NullFloat64
 	var authMode, authTokenURL, authClientID, authSecretSource sql.NullString
 	if err := scanner.Scan(
 		&lt.ID, &lt.ProjectName, &lt.URL, &lt.Status, &resultJSON,
+		&lt.Executor, &stagesJSON, &lt.VUs, &lt.Duration, &lt.Rate, &lt.TimeUnit, &lt.PreAllocatedVUs, &lt.MaxVUs, &sleepSeconds,
 		&scriptContent, &configContent, &payloadSourceJSON, &payloadContent, &lt.HTTPMethod, &lt.ContentType,
 		&lt.AuthConfig.Enabled, &authMode, &authTokenURL, &authClientID, &lt.AuthConfig.ClientAuthMethod, &lt.AuthConfig.RefreshSkewSeconds, &authSecretSource, &lt.AuthConfig.SecretConfigured,
 		&lt.UserID, &lt.Username, &lt.CreatedAt,
@@ -675,6 +710,12 @@ func scanLoadTest(scanner loadTestScanner, lt *model.LoadTest) error {
 	}
 	if resultJSON.Valid {
 		lt.ResultJSON = json.RawMessage(resultJSON.String)
+	}
+	if stagesJSON.Valid {
+		_ = json.Unmarshal([]byte(stagesJSON.String), &lt.Stages)
+	}
+	if sleepSeconds.Valid {
+		lt.SleepSeconds = &sleepSeconds.Float64
 	}
 	if scriptContent.Valid {
 		lt.ScriptContent = scriptContent.String
@@ -787,7 +828,8 @@ func (s *Store) UpdateLoadTestPayloadContent(ctx context.Context, id string, pay
 func (s *Store) GetLoadTest(ctx context.Context, id string) (*model.LoadTest, error) {
 	lt := &model.LoadTest{}
 	err := scanLoadTest(s.db.QueryRowContext(ctx,
-		`SELECT id, project_name, url, status, result_json, script_content, config_content, payload_source_json, payload_content, http_method, content_type,
+		`SELECT id, project_name, url, status, result_json, executor, stages, vus, duration, rate, time_unit, pre_allocated_vus, max_vus, sleep_seconds,
+		        script_content, config_content, payload_source_json, payload_content, http_method, content_type,
 		        auth_enabled, auth_mode, auth_token_url, auth_client_id, auth_client_auth_method, auth_refresh_skew_seconds, auth_secret_source, auth_secret_configured,
 		        user_id, username, created_at
 		   FROM load_tests WHERE id = ?`,

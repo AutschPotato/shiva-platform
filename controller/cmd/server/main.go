@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/shiva-load-testing/controller/internal/completion"
 	"github.com/shiva-load-testing/controller/internal/config"
 	"github.com/shiva-load-testing/controller/internal/handler"
 	"github.com/shiva-load-testing/controller/internal/orchestrator"
@@ -115,7 +116,8 @@ func run(logger *slog.Logger) error {
 	}
 
 	// Test handler (needed by both router and scheduler)
-	testH := handler.NewTestHandler(st, orch, logger, cfg.ScriptsDir, cfg.OutputDir)
+	completionRegistry := completion.NewRegistry()
+	testH := handler.NewTestHandler(st, orch, logger, cfg.ScriptsDir, cfg.OutputDir, completionRegistry, cfg.InternalControllerURL)
 
 	// Scheduler
 	sched := scheduler.New(st, testH, orch, logger, cfg.EncryptionKey)

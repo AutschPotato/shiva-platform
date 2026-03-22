@@ -74,6 +74,7 @@ type pollStateSnapshot struct {
 	zeroMetricRun       int
 	rampingDone         bool
 	expectedRunDuration time.Duration
+	totalVUs            int
 }
 
 func New(addresses []string, pollInterval time.Duration, maxTestDuration time.Duration, logger *slog.Logger, dashboard DashboardRuntimeConfig) *Orchestrator {
@@ -120,7 +121,7 @@ func isBenignStartupResumeError(err error) bool {
 		strings.Contains(msg, "test execution wasn't paused")
 }
 
-func (o *Orchestrator) resumeAll(ctx context.Context, tolerateAlreadyStarted bool) error {
+func (o *Orchestrator) resumeAll(ctx context.Context, tolerateAlreadyStarted bool, fastFailBenign bool) error {
 	g, ctx := errgroup.WithContext(ctx)
 	paused := false
 	patch := model.K6StatusPatch{Paused: &paused}
@@ -143,6 +144,10 @@ func (o *Orchestrator) resumeAll(ctx context.Context, tolerateAlreadyStarted boo
 					o.logger.Info("worker already active before resume completed", "worker", w.Address)
 					return nil
 				}
+				if fastFailBenign && isBenignStartupResumeError(err) {
+					lastErr = err
+					break
+				}
 				lastErr = err
 			}
 			o.logger.Error("failed to resume worker after retries", "worker", w.Address, "error", lastErr)
@@ -156,16 +161,52 @@ func (o *Orchestrator) resumeAll(ctx context.Context, tolerateAlreadyStarted boo
 // Each worker is retried up to 5 times with 2s backoff to handle the case where
 // the externally-controlled executor hasn't fully initialized yet.
 func (o *Orchestrator) ResumeAll(ctx context.Context) error {
-	return o.resumeAll(ctx, false)
+	return o.resumeAll(ctx, false, false)
 }
 
-// ResumeAllForStart starts prepared workers. During fresh startup a worker can
-// race from paused into an already-active state before the controller's resume
-// patch arrives. Those "already started / not paused" responses are benign and
-// should not fail the overall launch.
+func (o *Orchestrator) recoverWorkersForStart(ctx context.Context) error {
+	if err := o.StopAll(ctx); err != nil {
+		return err
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	return o.WaitForAllReady(waitCtx)
+}
+
+// ResumeAllForStart starts prepared workers.
+// We intentionally do not tolerate "already started / not paused" responses:
+// a worker that is already active at launch may still carry stale runtime state
+// and can silently miss per-run artifact uploads.
 func (o *Orchestrator) ResumeAllForStart(ctx context.Context, controllable bool) error {
 	_ = controllable
-	return o.resumeAll(ctx, true)
+	const maxRecoveryAttempts = 3
+	for attempt := 1; attempt <= maxRecoveryAttempts; attempt++ {
+		err := o.resumeAll(ctx, false, true)
+		if err == nil {
+			if attempt > 1 {
+				o.logger.Info("worker start recovered after forced stop/reload", "attempt", attempt, "max_attempts", maxRecoveryAttempts)
+			}
+			return nil
+		}
+		if !isBenignStartupResumeError(err) {
+			return err
+		}
+		if attempt == maxRecoveryAttempts {
+			return err
+		}
+
+		o.logger.Warn("worker start hit active-state resume race, forcing stop/reload before retry",
+			"attempt", attempt,
+			"max_attempts", maxRecoveryAttempts,
+			"error", err,
+		)
+		if err := o.recoverWorkersForStart(ctx); err != nil {
+			return fmt.Errorf("failed to recover workers after active-state resume race: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // PauseAll sends a pause command to all workers in parallel.
@@ -369,6 +410,7 @@ func (o *Orchestrator) updatePollingState(agg *model.AggregatedMetrics) pollStat
 		zeroMetricRun:       o.zeroMetricRun,
 		rampingDone:         o.rampingDone,
 		expectedRunDuration: o.expectedRunDuration,
+		totalVUs:            agg.TotalVUs,
 	}
 }
 
@@ -377,7 +419,17 @@ func (o *Orchestrator) shouldCompleteTest(ctx context.Context, tickCount int, st
 	const zeroTicksToEnd = 3
 
 	if state.hasManagedRamp {
-		return state.rampingDone
+		if state.rampingDone {
+			return true
+		}
+		// Managed-ramp runs can also end early (for example due to auth aborts).
+		// In that case we must not wait for rampDone forever. However, avoid
+		// false-positive worker status transitions while VUs are still reported.
+		return state.seenRunning &&
+			state.totalVUs == 0 &&
+			state.zeroMetricRun >= 2 &&
+			tickCount >= minTicksBeforeEndCheck &&
+			o.allWorkersEnded(ctx)
 	}
 	if state.controllable {
 		return state.seenRunning && tickCount >= minTicksBeforeEndCheck && o.allWorkersEnded(ctx)
@@ -605,6 +657,17 @@ func (o *Orchestrator) GetTestStartTime() time.Time {
 // WorkerCount returns the number of configured workers.
 func (o *Orchestrator) WorkerCount() int {
 	return len(o.workers)
+}
+
+func (o *Orchestrator) WorkerNames() []string {
+	names := make([]string, 0, len(o.workers))
+	for _, worker := range o.workers {
+		if worker == nil {
+			continue
+		}
+		names = append(names, worker.Name())
+	}
+	return names
 }
 
 func (o *Orchestrator) FindWorker(nameOrAddress string) *Worker {
