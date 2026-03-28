@@ -1390,7 +1390,12 @@ func (h *TestHandler) GetLiveMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if testID == "" {
-		httpError(w, "no test is currently running", http.StatusNotFound)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"test_id": "",
+			"status":  "idle",
+			"phase":   "idle",
+			"message": "no test is currently running",
+		})
 		return
 	}
 
