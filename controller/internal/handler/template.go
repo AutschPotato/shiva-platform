@@ -96,17 +96,58 @@ func validateTemplateRequest(req *model.TestTemplateRequest) string {
 	if req.Name == "" {
 		return "name is required"
 	}
+	req.Mode = inferTemplateMode(req)
 	if err := normalizeTemplateRequestPayload(req); err != nil {
 		return err.Error()
 	}
 	return ""
 }
 
-func newTemplateFromRequest(req *model.TestTemplateRequest, requester templateRequester) *model.TestTemplate {
-	mode := req.Mode
-	if mode == "" {
-		mode = "builder"
+func templateRequestHasBuilderSignals(req *model.TestTemplateRequest) bool {
+	if req == nil {
+		return false
 	}
+	return strings.TrimSpace(req.URL) != "" ||
+		len(req.Stages) > 0 ||
+		strings.TrimSpace(req.HTTPMethod) != "" ||
+		strings.TrimSpace(req.ContentType) != "" ||
+		strings.TrimSpace(req.PayloadJSON) != "" ||
+		req.PayloadTargetKiB > 0 ||
+		req.Auth.Enabled
+}
+
+func inferTemplateMode(req *model.TestTemplateRequest) string {
+	if req == nil {
+		return "builder"
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	hasBuilderSignals := templateRequestHasBuilderSignals(req)
+	hasScript := strings.TrimSpace(req.ScriptContent) != ""
+
+	switch mode {
+	case "builder":
+		return "builder"
+	case "upload":
+		// Compatibility for older clients that accidentally submit upload mode
+		// for builder payloads.
+		if hasBuilderSignals {
+			return "builder"
+		}
+		return "upload"
+	default:
+		if hasBuilderSignals {
+			return "builder"
+		}
+		if hasScript {
+			return "upload"
+		}
+		return "builder"
+	}
+}
+
+func newTemplateFromRequest(req *model.TestTemplateRequest, requester templateRequester) *model.TestTemplate {
+	mode := inferTemplateMode(req)
 
 	t := &model.TestTemplate{
 		ID:               uuid.New().String(),
