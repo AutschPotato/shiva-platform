@@ -120,6 +120,12 @@ func TestGenerateFromBuilderIncludesAuthFlow(t *testing.T) {
 	if !strings.Contains(result.Script, `const AUTH_TOKEN_TIMEOUT = envString('`+AuthTokenTimeoutEnvVar+`', '10s');`) {
 		t.Fatalf("expected auth token timeout to come from env contract")
 	}
+	if !strings.Contains(result.Script, `discardResponseBodies: true,`) {
+		t.Fatalf("expected generated builder script to discard response bodies by default")
+	}
+	if !strings.Contains(result.Script, `responseType: 'text'`) {
+		t.Fatalf("expected auth token request to keep text response body for token parsing")
+	}
 	if !strings.Contains(result.Script, `const AUTH_RETRYABLE_STATUS_CODES = envString('`+AuthRetryableStatusCodesEnvVar+`', '408,429,502,503,504');`) {
 		t.Fatalf("expected auth retryable status codes to come from env contract")
 	}
@@ -240,6 +246,7 @@ func TestBuildBuilderConfigIncludesVisibleRuntimeContract(t *testing.T) {
 	assertEnvValue(ContentTypeEnvVar, "application/json")
 	assertEnvValue(PayloadSourceJSONEnvVar, `{"hello":"world"}`)
 	assertEnvValue(PayloadTargetBytesEnvVar, "1024")
+	assertEnvValue(K6WebDashboardEnvVar, "false")
 	assertEnvValue(AuthEnabledEnvVar, "true")
 	assertEnvValue(AuthTokenURLEnvVar, "https://auth.example.com/oauth/token")
 	assertEnvValue(AuthClientIDEnvVar, "demo-client")
@@ -247,6 +254,9 @@ func TestBuildBuilderConfigIncludesVisibleRuntimeContract(t *testing.T) {
 	assertEnvValue(AuthClientAuthMethodEnvVar, "basic")
 	assertEnvValue(AuthRefreshSkewEnvVar, "45")
 	assertEnvValue(AuthRetryableStatusCodesEnvVar, "408,429,502,503,504")
+	if got, ok := config["discardResponseBodies"].(bool); !ok || !got {
+		t.Fatalf("expected discardResponseBodies=true in builder config, got %#v", config["discardResponseBodies"])
+	}
 }
 
 func TestEnrichBuilderConfigMergesBuilderEnvContract(t *testing.T) {
@@ -287,6 +297,32 @@ func TestEnrichBuilderConfigMergesBuilderEnvContract(t *testing.T) {
 	}
 	if env[AuthClientSecretEnvVar] != "reuse-secret" {
 		t.Fatalf("expected auth client secret to be visible in config env")
+	}
+	if env[K6WebDashboardEnvVar] != "false" {
+		t.Fatalf("expected k6 dashboard default to be disabled in config env")
+	}
+	if got, ok := config["discardResponseBodies"].(bool); !ok || !got {
+		t.Fatalf("expected discardResponseBodies=true by default in enriched config, got %#v", config["discardResponseBodies"])
+	}
+}
+
+func TestEnrichBuilderConfigKeepsExplicitDiscardResponseBodiesOverride(t *testing.T) {
+	req := &model.TestRequest{
+		URL: "https://api.example.com/override",
+	}
+
+	content, err := EnrichBuilderConfig(`{"discardResponseBodies":false,"env":{"EXISTING":"value"}}`, req)
+	if err != nil {
+		t.Fatalf("expected config enrichment, got error: %v", err)
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		t.Fatalf("expected valid config json, got error: %v", err)
+	}
+
+	if got, ok := config["discardResponseBodies"].(bool); !ok || got {
+		t.Fatalf("expected explicit discardResponseBodies=false override to be preserved, got %#v", config["discardResponseBodies"])
 	}
 }
 

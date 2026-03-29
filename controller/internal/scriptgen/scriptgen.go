@@ -36,6 +36,7 @@ const (
 	DefaultHTTPMethod              = "GET"
 	DefaultContentType             = "application/json"
 	payloadPaddingField            = "_shiva_padding"
+	K6WebDashboardEnvVar           = "K6_WEB_DASHBOARD"
 	AuthClientSecretEnvVar         = "AUTH_CLIENT_SECRET"
 	AuthEnabledEnvVar              = "AUTH_ENABLED"
 	AuthModeEnvVar                 = "AUTH_MODE"
@@ -363,7 +364,7 @@ function buildTokenRequest() {
     body += '&client_secret=' + encodeURIComponent(AUTH_CLIENT_SECRET);
   }
 
-  return { body, params: { headers, timeout: AUTH_TOKEN_TIMEOUT } };
+  return { body, params: { headers, timeout: AUTH_TOKEN_TIMEOUT, responseType: 'text' } };
 }
 
 function markAuthAbort(cause, reason, statusCode, retryable) {
@@ -671,6 +672,7 @@ export const options = {
       duration: '{{ .TotalDuration }}',
     },
   },
+  discardResponseBodies: true,
   thresholds: {
     http_req_duration: ['p(95)<1500'],
     errors: ['rate<0.1'],
@@ -695,6 +697,7 @@ export const options = {
       maxVUs: {{ .MaxVUs }},
     },
   },
+  discardResponseBodies: true,
   thresholds: {
     http_req_duration: ['p(95)<1500'],
     errors: ['rate<0.1'],
@@ -723,6 +726,7 @@ export const options = {
       ],
     },
   },
+  discardResponseBodies: true,
   thresholds: {
     http_req_duration: ['p(95)<1500'],
     errors: ['rate<0.1'],
@@ -1006,6 +1010,7 @@ func buildBuilderEnvContract(req *model.TestRequest) map[string]string {
 		ContentTypeEnvVar:        NormalizeContentType(req.ContentType),
 		PayloadSourceJSONEnvVar:  strings.TrimSpace(req.PayloadJSON),
 		PayloadTargetBytesEnvVar: strconv.Itoa(payloadTargetBytes(req.PayloadTargetKiB)),
+		K6WebDashboardEnvVar:     "false",
 		AuthEnabledEnvVar:        strconv.FormatBool(req.Auth.Enabled),
 	}
 	if strings.TrimSpace(req.URL) != "" {
@@ -1033,6 +1038,7 @@ func mergeEnvIntoConfigContent(content string, env map[string]string) (string, e
 			return "", fmt.Errorf("parse config: %w", err)
 		}
 	}
+	applyBuilderConfigDefaults(config)
 	envBlock := map[string]any{}
 	if existing, ok := config["env"]; ok && existing != nil {
 		existingMap, ok := existing.(map[string]any)
@@ -1054,6 +1060,12 @@ func mergeEnvIntoConfigContent(content string, env map[string]string) (string, e
 		return "", fmt.Errorf("marshal config: %w", err)
 	}
 	return string(merged), nil
+}
+
+func applyBuilderConfigDefaults(config map[string]any) {
+	if _, ok := config["discardResponseBodies"]; !ok {
+		config["discardResponseBodies"] = true
+	}
 }
 
 func BuildBuilderConfig(req *model.TestRequest) (string, error) {
@@ -1090,6 +1102,7 @@ func BuildBuilderConfig(req *model.TestRequest) (string, error) {
 		"scenarios": map[string]any{
 			"default": scenario,
 		},
+		"discardResponseBodies": true,
 		"thresholds": map[string]any{
 			"http_req_duration": []string{"p(95)<500", "p(99)<1000"},
 			"errors":            []string{"rate<0.01"},
