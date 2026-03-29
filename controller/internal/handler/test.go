@@ -130,7 +130,9 @@ func normalizeTemplateRequestPayload(req *model.TestTemplateRequest) error {
 	if err := normalizeAuthInput(&req.Auth); err != nil {
 		return err
 	}
-	_, err := normalizePayloadFields(req.ScriptContent != "", &req.HTTPMethod, &req.ContentType, &req.PayloadJSON, &req.PayloadTargetKiB)
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	hasScript := req.ScriptContent != "" && mode != "builder"
+	_, err := normalizePayloadFields(hasScript, &req.HTTPMethod, &req.ContentType, &req.PayloadJSON, &req.PayloadTargetKiB)
 	return err
 }
 
@@ -1390,7 +1392,12 @@ func (h *TestHandler) GetLiveMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if testID == "" {
-		httpError(w, "no test is currently running", http.StatusNotFound)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"test_id": "",
+			"status":  "idle",
+			"phase":   "idle",
+			"message": "no test is currently running",
+		})
 		return
 	}
 
