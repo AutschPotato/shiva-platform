@@ -326,6 +326,38 @@ func TestEnrichBuilderConfigKeepsExplicitDiscardResponseBodiesOverride(t *testin
 	}
 }
 
+func TestEnrichBuilderConfigKeepsExplicitEnvOverrides(t *testing.T) {
+	req := &model.TestRequest{
+		URL:        "https://api.example.com/generated-default",
+		HTTPMethod: "POST",
+	}
+
+	content, err := EnrichBuilderConfig(`{"env":{"K6_WEB_DASHBOARD":"true","HTTP_METHOD":"PUT"}}`, req)
+	if err != nil {
+		t.Fatalf("expected config enrichment, got error: %v", err)
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		t.Fatalf("expected valid config json, got error: %v", err)
+	}
+
+	env, ok := config["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected env block in config")
+	}
+
+	if env[K6WebDashboardEnvVar] != "true" {
+		t.Fatalf("expected explicit K6 dashboard override to be preserved, got %#v", env[K6WebDashboardEnvVar])
+	}
+	if env[HTTPMethodEnvVar] != "PUT" {
+		t.Fatalf("expected explicit HTTP method override to be preserved, got %#v", env[HTTPMethodEnvVar])
+	}
+	if env[TargetURLEnvVar] != "https://api.example.com/generated-default" {
+		t.Fatalf("expected missing generated env key to be backfilled from builder contract, got %#v", env[TargetURLEnvVar])
+	}
+}
+
 func TestWriteEnvFileEncodesPayloadJSONAsBase64(t *testing.T) {
 	scriptsDir := t.TempDir()
 	payload := "{\n  \"message\": \"Lorem ipsum dolor sit amet\"\n}"

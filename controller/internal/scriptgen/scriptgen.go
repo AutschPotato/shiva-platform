@@ -1050,6 +1050,9 @@ func mergeEnvIntoConfigContent(content string, env map[string]string) (string, e
 		}
 	}
 	for key, value := range env {
+		if _, exists := envBlock[key]; exists {
+			continue
+		}
 		envBlock[key] = value
 	}
 	if len(envBlock) > 0 {
